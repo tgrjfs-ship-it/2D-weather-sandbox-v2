@@ -530,7 +530,7 @@
         let alt = Math.max(1, (10 + Math.random() * 8) - 5); // effectively ~5..13m
         if (type === 'cirrus') alt = 110 + Math.random() * 25;
         else if (type === 'altostratus') alt = 40 + Math.random() * 12;
-        else if (type === 'cumulonimbus') alt = 28 + Math.random() * 18;
+        else if (type === 'cumulonimbus') alt = 35 + Math.random() * 18;
         // bring clouds 25% closer to surface (reduce altitude) except very high cirrus
         if (type !== 'cirrus') {
           alt = Math.max(0.6, alt * 0.75);
@@ -1914,8 +1914,8 @@
               const proximity = (30 - dist) / 30;
               const shakeMag = proximity * intensity * 0.7 * e.opacity;
               if (shakeMag > 0.02) {
-                camera.position.x += (Math.random() - 1.5) * shakeMag;
-                camera.position.y += (Math.random() - 1.5) * (shakeMag * 1.5);
+                camera.position.x += (Math.random() - 0.5) * shakeMag;
+                camera.position.y += (Math.random() - 0.5) * (shakeMag * 0.5);
               }
             }
           }
