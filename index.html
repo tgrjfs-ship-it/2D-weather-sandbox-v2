@@ -37,6 +37,47 @@
       opacity: 0;
       transition: opacity 0.45s ease;
       }
+
+    /* Responsive layout fixes to avoid overlapping UI on narrow screens */
+    @media (max-width: 900px) {
+      /* Slightly shrink panels and ensure spacing */
+      #stats { left: 12px; top: 12px; max-width: 220px; font-size: 12px; padding: 12px; }
+      #controls { left: 12px; right: 12px; bottom: 12px; min-width: auto; width: auto; padding: 12px; border-radius: 10px; }
+      #info { display: none; } /* hide verbose info on smaller screens */
+      #radar { right: 12px; bottom: 84px; width: 140px; height: 140px; }
+      #toggleGui { top: 10px; right: 10px; padding: 8px 12px; font-size: 13px; }
+      #pauseBtn, #resetBtn { top: 10px; left: 10px; padding: 8px 10px; font-size: 13px; }
+      #resetBtn { left: 76px; }
+    }
+
+    /* Mobile: stack controls as a bottom sheet and keep stats compact */
+    @media (max-width: 520px) {
+      .ui-panel { padding: 10px; border-radius: 12px; }
+      #stats { left: 8px; top: 8px; max-width: 160px; font-size: 12px; line-height: 1.4; z-index: 1000; }
+      #controls {
+        left: 6px;
+        right: 6px;
+        bottom: 6px;
+        min-width: unset;
+        width: auto;
+        max-height: 46vh;
+        overflow-y: auto;
+        padding-bottom: 18px;
+        z-index: 1000;
+      }
+      #radar {
+        right: 8px;
+        bottom: calc(6px + 46vh + 8px);
+        width: 110px;
+        height: 110px;
+      }
+      #toggleGui { top: 8px; right: 8px; z-index: 1002; }
+      #pauseBtn { top: 8px; left: 8px; z-index: 1002; }
+      #resetBtn { top: 8px; left: 70px; z-index: 1002; }
+    }
+
+    /* Prevent UI panels from covering the canvas interaction area when hidden */
+    .ui-panel[style*="display: none"] { pointer-events: none; }
   </style>
 </head>
 <body>
@@ -55,6 +96,7 @@
     <div><strong>Wind Speed:</strong> <span id="windSpeed">0</span> km/h</div>
     <div><strong>Temperature:</strong> <span id="tempDisplay">20</span>°C</div>
     <div><strong>Humidity:</strong> <span id="humidityDisplay">50</span>%</div>
+    <div><strong>FPS:</strong> <span id="fps">0</span></div>
   </div>
   
   <div id="controls" class="ui-panel" style="display: block;">
@@ -81,6 +123,41 @@
     <div class="slider-group">
       <label class="slider-label">Simulation Speed: <span id="speedValue">1.00</span>x</label>
       <input type="range" id="speedSlider" min="0.1" max="10" step="0.1" value="1.0">
+    </div>
+
+    <!-- Cloud toggles: enable/disable individual cloud types -->
+    <div class="slider-group" style="margin-top:8px;">
+      <label class="slider-label">Cloud Types (toggle formation)</label>
+      <div id="cloudTogglePanel" style="display:flex; flex-wrap:wrap; gap:6px;">
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="altostratus" checked> Altostratus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="cumulus_humilis" checked> Cumulus Humilis</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="cumulus_congestus" checked> Cumulus Congestus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="cumulonimbus" checked> Cumulonimbus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="supercell" checked> Supercell</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="derecho" checked> Derecho</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="stratus" checked> Stratus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="nimbostratus" checked> Nimbostratus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="cirrus" checked> Cirrus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="pyrocumulus" checked> Pyrocumulus</label>
+        <label style="font-size:12px;"><input type="checkbox" data-cloud="pyrocumulonimbus" checked> Pyrocumulonimbus</label>
+      </div>
+      <div class="slider-hint">Uncheck to prevent that cloud type from forming</div>
+    </div>
+
+    <!-- Volcano spawn toggle -->
+    <div class="slider-group" style="margin-top:6px;">
+      <label style="font-size:13px;"><input type="checkbox" id="spawnVolcanoToggle" checked> Spawn Volcanoes at Start</label>
+      <div class="slider-hint">Toggle whether volcanoes are generated when the simulation starts or resets</div>
+    </div>
+
+    <!-- New toggles: Shadows & Hail -->
+    <div class="slider-group" style="margin-top:8px;">
+      <label style="font-size:13px;"><input type="checkbox" id="toggleShadows" checked> Enable Shadows</label>
+      <div class="slider-hint">Toggle renderer shadows on/off (may affect performance)</div>
+    </div>
+    <div class="slider-group" style="margin-top:6px;">
+      <label style="font-size:13px;"><input type="checkbox" id="toggleHail" checked> Allow Hail</label>
+      <div class="slider-hint">Toggle hail generation in precipitation (for performance)</div>
     </div>
   </div>
   
@@ -111,7 +188,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     const state = {
-      controls: { evaporationRate: 1.0, simulationSpeed: 1.0, windSpeed: 1.0, humidity: 50, temperature: 20 },
+      controls: { evaporationRate: 1.0, simulationSpeed: 1.0, windSpeed: 1.0, humidity: 50, temperature: 20, spawnVolcanoes: true, enableShadows: true, allowHail: true },
       guiVisible: true,
       paused: false
     };
@@ -120,7 +197,8 @@
       state.guiVisible = !state.guiVisible;
       const display = state.guiVisible ? 'block' : 'none';
       ['stats', 'controls', 'info', 'radar'].forEach(id => document.getElementById(id).style.display = display);
-      document.getElementById('toggleGui').textContent = state.guiVisible ? '👁️ Show GUI' : '🙈 Hide GUI';
+      // show "Hide GUI" when panels are visible and "Show GUI" when hidden
+      document.getElementById('toggleGui').textContent = state.guiVisible ? '🙈 Hide GUI' : '👁️ Show GUI';
     });
 
     document.getElementById('pauseBtn').addEventListener('click', () => {
@@ -137,18 +215,29 @@
       // pause briefly to avoid race during UI click
       state.paused = false;
       // reset control values to defaults
-      state.controls = { evaporationRate: 1.0, simulationSpeed: 1.0, windSpeed: 1.0, humidity: 50, temperature: 20 };
+      state.controls = { evaporationRate: 1.0, simulationSpeed: 1.0, windSpeed: 1.0, humidity: 50, temperature: 20, spawnVolcanoes: state.controls.spawnVolcanoes, enableShadows: state.controls.enableShadows, allowHail: state.controls.allowHail };
       // update sliders and UI displays
-      tempSlider.value = state.controls.temperature;
-      humiditySlider.value = state.controls.humidity;
-      formationSlider.value = state.controls.evaporationRate;
-      windSlider.value = state.controls.windSpeed;
-      speedSlider.value = state.controls.simulationSpeed;
+      // use safe DOM queries (avoid relying on possibly-undefined global variables)
+      const tempSliderEl = document.getElementById('tempSlider');
+      const humiditySliderEl = document.getElementById('humiditySlider');
+      const formationSliderEl = document.getElementById('formationSlider');
+      const windSliderEl = document.getElementById('windSlider');
+      const speedSliderEl = document.getElementById('speedSlider');
+      if (tempSliderEl) tempSliderEl.value = state.controls.temperature;
+      if (humiditySliderEl) humiditySliderEl.value = state.controls.humidity;
+      if (formationSliderEl) formationSliderEl.value = state.controls.evaporationRate;
+      if (windSliderEl) windSliderEl.value = state.controls.windSpeed;
+      if (speedSliderEl) speedSliderEl.value = state.controls.simulationSpeed;
       document.getElementById('tempValue').textContent = state.controls.temperature;
       document.getElementById('humidityValue').textContent = state.controls.humidity;
       document.getElementById('formationValue').textContent = state.controls.evaporationRate.toFixed(2);
       document.getElementById('windValue').textContent = state.controls.windSpeed.toFixed(2);
       document.getElementById('speedValue').textContent = state.controls.simulationSpeed.toFixed(2);
+      // update new toggles
+      const shEl = document.getElementById('toggleShadows');
+      const hailEl = document.getElementById('toggleHail');
+      if (shEl) { shEl.checked = !!state.controls.enableShadows; renderer.shadowMap.enabled = !!state.controls.enableShadows; }
+      if (hailEl) { hailEl.checked = !!state.controls.allowHail; }
 
       // clear clouds
       if (cloudSystem && cloudSystem.clouds) {
@@ -185,10 +274,31 @@
       }
 
       // reset volcano visuals and position
-      if (typeof volcano !== 'undefined' && volcano) {
-        volcano.active = true;
-        if (volcano.ember && volcano.ember.material) volcano.ember.material.opacity = 0.0;
-        volcano.mesh.position.set(volcano.position.x, 3, volcano.position.z);
+      if (typeof volcanoes !== 'undefined' && volcanoes && volcanoes.length) {
+        volcanoes.forEach(v => {
+          if (!v) return;
+          v.active = true;
+          if (v.ember && v.ember.material) v.ember.material.opacity = 0.0;
+          if (v.mesh && v.position) v.mesh.position.set(v.position.x, 3, v.position.z);
+        });
+      }
+
+      // respawn volcanoes per user toggle: clear array first if user disabled spawning
+      if (typeof volcanoes !== 'undefined') {
+        if (!state.controls.spawnVolcanoes) {
+          // deactivate existing volcanoes
+          volcanoes.forEach(v => {
+            if (!v) return;
+            v.active = false;
+            if (v.ember && v.ember.material) v.ember.material.opacity = 0.0;
+            if (v.mesh) scene.remove(v.mesh);
+            if (v.ember) scene.remove(v.ember);
+          });
+          volcanoes.length = 0;
+        } else {
+          // if none exist, spawn fresh set
+          if (volcanoes.length === 0) spawnVolcanoes();
+        }
       }
 
       // reset camera position and orientation
@@ -232,9 +342,17 @@
     camera.lookAt(0, 1.7, 10);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    // ensure no shadow map used
-    renderer.shadowMap.enabled = false;
+    // shadow map initially controlled by UI toggle (may remain off for performance)
+    renderer.shadowMap.enabled = !!state.controls.enableShadows;
     document.getElementById('container').appendChild(renderer.domElement);
+
+    // simple angle difference helper to replace THREE.MathUtils.angleDifference (not available in this Three.js version)
+    function angleDifference(a, b) {
+      let d = (a - b) % (Math.PI * 2);
+      if (d < -Math.PI) d += Math.PI * 2;
+      else if (d > Math.PI) d -= Math.PI * 2;
+      return d;
+    }
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const sunLight = new THREE.DirectionalLight(0xfff4e6, 1.2);
@@ -338,16 +456,42 @@
             float edgeFade = 1.0 - smoothstep(0.18, 1.2, length(vUv - 0.5) * 2.0);
             n *= edgeFade;
             vec3 lightDir = normalize(sunPosition);
+            
+            // --- Enhanced Shading Model ---
             float NdotL = dot(vNormal, lightDir);
-            float lightAmount = max(0.0, NdotL) * 1.0 + max(0.0, -NdotL) * 0.6 + 0.4;
-            vec3 darkColor = mix(shadowColor, vec3(0.12, 0.12, 0.18), moisture * 0.7);
-            vec3 color = mix(darkColor, lightColor, lightAmount);
+            
+            // 1. Core diffuse lighting (standard)
+            float diffuse = max(0.0, NdotL);
+            
+            // 2. Ambient occlusion / Shadowed side (using vNormal against opposing light)
+            float backScatter = max(0.0, -NdotL) * 0.5;
+            
+            // 3. Simple phase function approximation (forward scatter for bright edges)
+            vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+            float LdotV = dot(lightDir, viewDir);
+            float phase = (1.0 + LdotV * 0.5);
+            
+            // Total light amount
+            float lightAmount = diffuse * 1.0 + backScatter * 0.4 + 0.3; // Base ambient
+            lightAmount *= phase; // Apply phase boost
+
+            // Darken color based on moisture (for heavy rain/ice clouds)
+            vec3 baseCloudColor = mix(vec3(0.9, 0.92, 0.95), vec3(0.7, 0.75, 0.85), moisture * 0.4);
+            vec3 shadowedCloudColor = mix(shadowColor, vec3(0.12, 0.12, 0.18), moisture * 0.8);
+            
+            // Combine colors based on light amount
+            vec3 color = mix(shadowedCloudColor, baseCloudColor, lightAmount);
+            
+            // Final density calculation
             float finalDensity = n * density * (0.5 + moisture * 0.5);
-            // boost alpha near top-facing normals for better visibility and ensure always visible
+            
+            // Boost alpha near top-facing normals for better visibility and ensure always visible
             float normalMask = smoothstep(0.0, 0.6, NdotL);
             finalDensity = clamp(finalDensity + normalMask * 0.35, 0.0, 1.0);
+            
             // extra boost for visibility of thin structures
             finalDensity = min(1.0, finalDensity * 1.25);
+            
             gl_FragColor = vec4(color, finalDensity);
           }
         `,
@@ -381,12 +525,14 @@
           uTime: { value: 0 },
           uIntensity: { value: 1.0 },
           uColor: { value: new THREE.Color(0x4aa0ff) },
-          uWind: { value: new THREE.Vector2(0,0) }
+          uWind: { value: new THREE.Vector2(0,0) },
+          uVirga: { value: 0.0 }
         },
         vertexShader: `
           varying vec2 vUv;
           varying vec3 vPos;
           void main(){
+            // preserve uv for cylinder/cone mapping
             vUv = uv;
             vPos = position;
             vec4 mv = modelViewMatrix * vec4(position,1.0);
@@ -398,39 +544,72 @@
           uniform float uIntensity;
           uniform vec3 uColor;
           uniform vec2 uWind;
+          uniform float uVirga;
           varying vec2 vUv;
           varying vec3 vPos;
 
-          // simple periodic noise-ish function
-          float hash(float n){ return fract(sin(n)*43758.5453123); }
-          float noise(in vec2 x){
-            vec2 p = floor(x);
-            vec2 f = fract(x);
+          // radial taper function (0 at edge -> 1 at center)
+          float radialFalloff(vec2 uv) {
+            float x = (uv.x - 0.5);
+            // Stronger core and soft edges, narrower profile
+            return pow(max(0.0, 1.0 - abs(x)*2.5), 1.8);
+          }
+
+          // simple pseudo-noise for streak / edge variation
+          float hash(float n){ return fract(sin(n)*43758.5453); }
+          float noise(vec2 p){
+            vec2 i = floor(p);
+            vec2 f = fract(p);
             f = f*f*(3.0-2.0*f);
-            float n = p.x + p.y*57.0;
-            float res = mix(mix(hash(n+0.0), hash(n+1.0), f.x),
-                            mix(hash(n+57.0), hash(n+58.0), f.x), f.y);
-            return res;
+            float a = hash(i.x + i.y*57.0);
+            float b = hash(i.x+1.0 + i.y*57.0);
+            float c = hash(i.x + (i.y+1.0)*57.0);
+            float d = hash(i.x+1.0 + (i.y+1.0)*57.0);
+            return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
           }
 
           void main(){
-            // vertical coordinate 0..1
             float y = vUv.y;
-            // wind displacement creates slanted streaks
-            float windFactor = length(uWind) * 0.6;
-            vec2 coord = vec2(vUv.x*6.0 + uWind.x * (1.0 - y) * 4.0, (vUv.y*12.0) - uTime*6.0 + uWind.y*2.0);
-            // layered noise for streaks and turbulence
-            float n = noise(coord * 0.9) * 0.6 + noise(coord * 2.2) * 0.28 + noise(coord * 4.8) * 0.12;
-            // create vertical streak look using narrower horizontal falloff
-            float streak = smoothstep(0.55, 0.2, abs(vUv.x - 0.5 + sin(uTime*0.8 + vUv.y*6.0)*0.02) * (1.0 + n*0.6));
-            // fade near top and bottom and modulate by turbulence
-            float fade = smoothstep(0.0, 0.12, y) * (1.0 - smoothstep(0.92, 1.0, y));
-            float alpha = (0.18 + n*0.6) * streak * fade * uIntensity;
-            // add a soft glowing core near center for rain illumination
-            float core = exp(-pow((vUv.x-0.5)*6.0,2.0)) * 0.25;
-            vec3 col = mix(uColor * 0.7, vec3(1.0), core*0.6 + n*0.12);
+            // vertical animated noise for streaking, scaled by wind
+            vec2 coord = vec2(
+              vUv.x*8.0, // Increased horizontal stretch for turbulence
+              vUv.y*12.0 - uTime*8.0 // Faster vertical movement
+            );
+            
+            // Add wind shear/movement to texture coordinates
+            coord.x += uWind.x * y * 0.4;
+            coord.y += uWind.y * y * 0.2;
+
+            float n = noise(coord) * 0.6 + noise(coord*2.8)*0.3; // Higher freq noise for streaks
+
+            // core density calculation
+            float core = radialFalloff(vUv);
+            
+            // Create sharp vertical streaks based on noise and core density
+            float streakIntensity = 0.5 + n * 0.5;
+            float streak = smoothstep(0.0, 0.5, streakIntensity) * core;
+
+            float fadeTop = smoothstep(0.05, 0.25, y); // Start rain slightly below top
+            float fadeBottom = 1.0 - smoothstep(0.9, 1.0, y);
+
+            // Ragged edges using noise for turbulence
+            float edgeNoise = noise(vec2(vUv.x*16.0, vUv.y*8.0 + uTime*1.2));
+            float edgeMask = smoothstep(0.1, 0.7, core + edgeNoise - 0.2);
+
+            // Base alpha calculation
+            float alpha = (0.05 + n * 0.6) * streak * fadeTop * fadeBottom * uIntensity * edgeMask;
+
+            // Virga: fade lower part when rain evaporates before ground
+            // Use smoothstep for a softer transition
+            float virgaMask = mix(1.0, smoothstep(0.0, 0.75, y), uVirga);
+            alpha *= virgaMask;
+
+            // Color modulation: darker blue/gray for higher intensity/shadow
+            vec3 darkCol = mix(vec3(0.18, 0.25, 0.35), uColor, 0.4);
+            vec3 col = mix(darkCol, vec3(1.0), alpha * 0.8 + 0.1); // Brighten core
+            
             gl_FragColor = vec4(col, alpha);
-            if (gl_FragColor.a < 0.01) discard;
+            if (gl_FragColor.a < 0.005) discard;
           }
         `,
         transparent: true,
@@ -588,31 +767,56 @@
         this.temperature = 20;
         this.humidity = 50;
         this.evaporationRate = 1.0;
+        // allow toggling of cloud types from UI
+        this.allowedTypes = {
+          altostratus: true, cumulus_humilis: true, cumulus_congestus: true,
+          cumulonimbus: true, supercell: true, derecho: true, stratus: true,
+          nimbostratus: true, cirrus: true, pyrocumulus: true, pyrocumulonimbus: true
+        };
       }
       determineCloudType() {
         const r = Math.random(), h = this.humidity, t = this.temperature;
-        // if a volcano exists and is active near camera, bias toward pyrocumulus / pyrocumulonimbus
-        if (typeof volcano !== 'undefined' && volcano && volcano.active) {
-          const dx = (camera.position.x - volcano.position.x);
-          const dz = (camera.position.z - volcano.position.z);
-          const dist = Math.sqrt(dx*dx + dz*dz);
-          // within 240 units strong bias
-          if (dist < 240 && Math.random() < Math.min(0.65, 0.65 * (1 - dist / 240))) {
-            // stronger convection (hot/fire) can produce pyrocumulonimbus when unstable
-            if (h > 70 && t > 18 && Math.random() < 0.35) return 'pyrocumulonimbus';
-            return 'pyrocumulus';
+        // check any active volcano within range to bias pyro-cloud formation
+        if (typeof volcanoes !== 'undefined' && volcanoes && volcanoes.length > 0) {
+          // bias pyro selection by volcano size and proximity; large volcanoes strongly favor pyro-clouds
+          for (let vi = 0; vi < volcanoes.length; vi++) {
+            const v = volcanoes[vi];
+            if (!v || !v.active) continue;
+            const dx = (camera.position.x - v.position.x);
+            const dz = (camera.position.z - v.position.z);
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if (dist > v.influenceRadius) continue;
+            // probability scales with volcano.size and proximity (closer & bigger => much higher)
+            const sizeFactor = THREE.MathUtils.clamp(v.size / 1.0, 0.6, 3.0);
+            const prox = 1 - (dist / Math.max(1, v.influenceRadius));
+            const pyroChance = THREE.MathUtils.clamp(0.12 + sizeFactor * 0.24 + prox * 0.6, 0, 0.98);
+            if (Math.random() < pyroChance) {
+              // prefer pyrocumulonimbus on very large/active volcanoes with enough moisture/temperature
+              if (h > 68 && t > 16 && v.size > 1.6 && Math.random() < 0.6 && this.allowedTypes.pyrocumulonimbus) return 'pyrocumulonimbus';
+              // otherwise create pyrocumulus (frequent on even modest volcanoes)
+              if (this.allowedTypes.pyrocumulus) return 'pyrocumulus';
+            }
           }
         }
-        if (h > 85 && t > 25 && r > 0.97) return 'derecho';
-        if (h > 80 && r > 0.92) return 'supercell';
-        // new thin, layered low-altitude clouds
-        if (h > 60 && r > 0.6 && t < 22) return 'stratus';
-        if (h > 75 && r > 0.85) return 'cumulonimbus';
-        if (h > 70 && r > 0.75) return 'cumulus_congestus';
-        if (h > 80 && r > 0.65) return 'nimbostratus';
-        // make fair-weather cumulus significantly more common by lowering threshold
-        if (r > 0.55) return 'cumulus_humilis';
-        if (t < 15 && r > 0.5) return 'cirrus';
+        // explicit, stricter condition checks per cloud type (deterministic thresholds + small randomness)
+        if (this.allowedTypes.derecho && h >= 88 && t >= 26 && r > 0.985) return 'derecho';
+        if (this.allowedTypes.supercell && h >= 82 && t >= 24 && r > 0.94) return 'supercell';
+        if (this.allowedTypes.cumulonimbus && h >= 74 && t >= 20 && r > 0.86) return 'cumulonimbus';
+        if (this.allowedTypes.cumulus_congestus && h >= 68 && t >= 14 && r > 0.78) return 'cumulus_congestus';
+        if (this.allowedTypes.nimbostratus && h >= 78 && t >= 6 && r > 0.7) return 'nimbostratus';
+        if (this.allowedTypes.stratus && h >= 60 && t <= 24 && r > 0.58) return 'stratus';
+        if (this.allowedTypes.cirrus && t <= 10 && r > 0.5) return 'cirrus';
+        // fair-weather cumulus (lower threshold but still tied to humidity)
+        if (this.allowedTypes.cumulus_humilis && h >= 40 && r > 0.45) return 'cumulus_humilis';
+        // fallback: altostratus when nothing stricter fits (mid-level sheet)
+        if (this.allowedTypes.altostratus && h >= 35) return 'altostratus';
+        // if altostratus is disabled, pick first available allowed type to ensure something spawns
+        for (const k in this.allowedTypes) {
+          // prevent pyro cloud types from being chosen by fallback - they must come only from active volcano logic above
+          if ((k === 'pyrocumulus' || k === 'pyrocumulonimbus')) continue;
+          if (this.allowedTypes[k]) return k;
+        }
+        // as last resort
         return 'altostratus';
       }
       createCloud() {
@@ -623,7 +827,7 @@
         // low-altitude default for forming clouds
         let alt = Math.max(1, (10 + Math.random() * 8) - 5); // effectively ~5..13m
         // make cumulus_congestus appear ~50% farther from surface
-        if (type === 'cumulus_congestus') alt = alt * 1.5;
+        if (type === 'cumulus_congestus') alt = alt * 1.75;
         if (type === 'cirrus') alt = 110 + Math.random() * 25;
         else if (type === 'altostratus') alt = 40 + Math.random() * 12;
         else if (type === 'cumulonimbus') alt = 28 + Math.random() * 18;
@@ -633,104 +837,294 @@
         if (type !== 'cirrus') {
           alt = Math.max(0.6, alt * 0.75);
         }
+        // If this is a pyro-type, and there is a nearby active volcano, place the cloud above the volcano's summit (on top)
+        let assignedVolcano = null;
+        if ((type === 'pyrocumulus' || type === 'pyrocumulonimbus') && typeof volcanoes !== 'undefined' && volcanoes && volcanoes.length > 0) {
+          let nearestVolcano = null;
+          let nearestDist = Infinity;
+          for (let vi = 0; vi < volcanoes.length; vi++) {
+            const v = volcanoes[vi];
+            if (!v || !v.active) continue;
+            const dx = v.position.x - (camera.position.x || 0);
+            const dz = v.position.z - (camera.position.z || 0);
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if (dist < nearestDist) { nearestDist = dist; nearestVolcano = v; }
+          }
+          // only commit to pyro placement if the nearest volcano is within an expanded reasonable range
+          if (nearestVolcano && nearestDist <= nearestVolcano.influenceRadius + 80) {
+            assignedVolcano = nearestVolcano;
+            // position group horizontally above the volcano summit with small jitter and set altitude to just above summit
+            group.position.set(
+              nearestVolcano.mesh.position.x + (Math.random() - 0.5) * 6,
+              Math.max(1.0, nearestVolcano.mesh.position.y + 4.5 * nearestVolcano.size + (type === 'pyrocumulonimbus' ? 6 + Math.random() * 6 : Math.random() * 3)),
+              nearestVolcano.mesh.position.z + (Math.random() - 0.5) * 6
+            );
+          }
+        }
+        
         // reduced spawn radius and biased towards current camera position so new clouds appear near viewer
         const SPAWN_RADIUS = 240;
         const cx = (typeof camera !== 'undefined') ? camera.position.x : 0;
         const cz = (typeof camera !== 'undefined') ? camera.position.z : 0;
         // bias spawn to be closer to camera (within ~SPAWN_RADIUS/3) to ensure forming clouds are visible nearby
-        group.position.set(cx + (Math.random() - 0.5) * (SPAWN_RADIUS / 2.5), alt, cz + (Math.random() - 0.5) * (SPAWN_RADIUS / 2.5));
+        if (!assignedVolcano) {
+          // enforce a minimum spawn altitude to avoid clouds sitting at surface level
+          const minSafeAlt = 3.0;
+          const spawnAlt = Math.max(minSafeAlt, alt);
+          group.position.set(cx + (Math.random() - 0.5) * (SPAWN_RADIUS / 2.5), spawnAlt, cz + (Math.random() - 0.5) * (SPAWN_RADIUS / 2.5));
+        }
+        
+        // If the chosen type is a pyro-type but there's no nearby active volcano, force fallback to altostratus
+        if ((type === 'pyrocumulus' || type === 'pyrocumulonimbus')) {
+          // find nearest active volcano within required proximity
+          let nearestVolcano = null;
+          let nearestDist = Infinity;
+          if (typeof volcanoes !== 'undefined' && volcanoes && volcanoes.length > 0) {
+            for (let vi = 0; vi < volcanoes.length; vi++) {
+              const v = volcanoes[vi];
+              if (!v || !v.active) continue;
+              const dx = v.position.x - group.position.x;
+              const dz = v.position.z - group.position.z;
+              const dist = Math.sqrt(dx*dx + dz*dz);
+              if (dist < nearestDist) { nearestDist = dist; nearestVolcano = v; }
+            }
+          }
+          // only keep pyro type when a volcano is actually nearby (within 360m); otherwise fallback
+          if (!nearestVolcano || nearestDist > 360) {
+            // fallback to non-pyro: prefer cumulonimbus if conditions allow, else altostratus
+            if (this.allowedTypes.cumulonimbus && this.humidity >= 74 && this.temperature >= 20) {
+              group.userData = group.userData || {};
+              group.userData.forcedFallback = 'cumulonimbus';
+            } else {
+              group.userData = group.userData || {};
+              group.userData.forcedFallback = 'altostratus';
+            }
+          } else {
+            // place pyro cloud near the volcano (within small jitter)
+            // prefer to position pyrocumulus/pyrocumulonimbus above the summit area, slightly higher than the cone
+            group.position.set(
+              nearestVolcano.mesh.position.x + (Math.random() - 0.5) * 6,
+              Math.max(1.0, nearestVolcano.mesh.position.y + 4.5 * nearestVolcano.size + (type === 'pyrocumulonimbus' ? 6 + Math.random() * 6 : Math.random() * 3)),
+              nearestVolcano.mesh.position.z + (Math.random() - 0.5) * 6
+            );
+          }
+        }
+
+        // if forcedFallback was set above, override the initial type variable for safe construction
+        let effectiveType = type;
+        if (group.userData && group.userData.forcedFallback) effectiveType = group.userData.forcedFallback;
         
         let canPrecip = false, alwaysPrecip = false, canTornado = false, thresh = 0.8;
-        if (type === 'derecho' || type === 'supercell' || type === 'cumulonimbus' || type === 'cumulus_congestus' || type === 'altostratus') {
-          canPrecip = alwaysPrecip = true;
+        if (effectiveType === 'derecho' || effectiveType === 'supercell' || effectiveType === 'cumulonimbus' || effectiveType === 'cumulus_congestus' || effectiveType === 'altostratus' || effectiveType === 'nimbostratus') {
+          canPrecip = true;
+          if (effectiveType !== 'cumulus_congestus' && effectiveType !== 'altostratus') alwaysPrecip = true;
           thresh = 0.3;
         }
-        if (type === 'supercell') canTornado = true;
-        if (type === 'cumulonimbus' && this.temperature > 20) canTornado = Math.random() > 0.7;
+        if (effectiveType === 'supercell') canTornado = true;
+        if (effectiveType === 'cumulonimbus' && this.temperature > 20) canTornado = Math.random() > 0.7;
         
-        group.userData = {
-          type, age: 0, maxAge: 900 + Math.random() * 600, moisture: 0.45, stage: 'forming',
+        group.userData = Object.assign(group.userData || {}, {
+          type: effectiveType, age: 0, maxAge: 900 + Math.random() * 600, moisture: 0.45, stage: 'forming',
           precipitating: false, canPrecipitate: canPrecip, alwaysPrecipitate: alwaysPrecip,
           precipitationThreshold: thresh, precipitationIntensity: 0, condensationLevel: 0,
-          structureElements: [], initialY: group.position.y, targetHeight: group.position.y,
+          structureElements: [], initialY: Math.max(3, group.position.y), targetHeight: group.position.y,
           verticalGrowth: 0, horizontalExpansion: 1, baseScale: 1 + Math.random() * 0.8,
           canSpawnTornado: canTornado, hasTornado: false,
           // wind emission params for strong clouds
           lastGustTime: 0,
           gustCooldown: 6 + Math.random()*8
-        };
+        });
         
         group.scale.set(0.01, 0.01, 0.01);
-        this.buildInitialStructure(group, type);
+        // build with effectiveType (use effectiveType so pyro-specific visuals get handled correctly)
+        this.buildInitialStructure(group, group.userData.type);
         scene.add(group);
         this.clouds.push(group);
       }
       buildInitialStructure(group, type) {
-        const makePuff = (size, pos, dens = 0.95) => {
+        // Treat pyro types as their corresponding cumulus structures but mark as pyro
+        let baseType = type;
+        if (type === 'pyrocumulus') baseType = 'cumulus_congestus';
+        if (type === 'pyrocumulonimbus') baseType = 'cumulonimbus';
+        if (group.userData && (type === 'pyrocumulus' || type === 'pyrocumulonimbus')) group.userData.pyro = true;
+
+        const makePuff = (size, pos, dens = 0.95, moisture = 0.9) => {
           const puff = new THREE.Mesh(new THREE.SphereGeometry(size, 16, 16), createCloudMaterial());
-          puff.material.uniforms.density.value = dens;
-          puff.material.uniforms.moisture.value = 0.9;
+          puff.material.uniforms.density.value = 0.0;
+          puff.userData = puff.userData || {};
+          // Boost pyro puffs target density to make them visually thicker/heavier and lower/darker shadow color
+          let targetDens = dens;
+          let shadowCol = 0x557799;
+          if (group.userData && group.userData.pyro) {
+            targetDens = Math.min(1.0, dens + 0.2 + Math.random() * 0.1);
+            shadowCol = 0x5c4d40; // Ash/smoke color
+            moisture = Math.min(1.0, moisture + 0.1);
+          }
+
+          puff.userData.targetDensity = targetDens;
+          puff.material.uniforms.moisture.value = moisture;
+          puff.material.uniforms.shadowColor.value = new THREE.Color(shadowCol);
           puff.position.copy(pos);
           group.add(puff);
           group.userData.structureElements.push(puff);
         };
-        // pyro-cloud visuals: darker, smoky puffs with occasional ember sprite hints
-        if (type === 'pyrocumulus' || type === 'pyrocumulonimbus') {
-          const puffCount = (type === 'pyrocumulonimbus') ? 8 + Math.floor(Math.random()*8) : 3 + Math.floor(Math.random()*4);
-          for (let i = 0; i < puffCount; i++) {
-            const s = 2.0 + Math.random() * 3.2;
-            const p = new THREE.Mesh(new THREE.SphereGeometry(s, 16, 16), createCloudMaterial());
-            p.material.uniforms.density.value = 0.65 + Math.random() * 0.35;
-            p.material.uniforms.moisture.value = 0.6 + Math.random() * 0.35;
-            // smoky tint -> darker grey to represent ash/smoke
-            p.material.uniforms.shadowColor.value = new THREE.Color(0x2b2b2b); // dark grey
-            p.material.uniforms.lightColor.value = new THREE.Color(0x9a9a9a); // muted lighter grey for highlights
-            p.position.set((Math.random()-0.5)*6, Math.random()*4, (Math.random()-0.5)*6);
-            group.add(p);
-            group.userData.structureElements.push(p);
-          }
-          // give pyro-clouds a slight ember glow property for update-time flashes
-          group.userData.pyro = true;
-          group.userData.canPrecipitate = (type === 'pyrocumulonimbus');
-          return;
-        }
-        // thin layered stratus implementation: wide low-profile flattened puffs and discs
-        if (type === 'stratus') {
-          const layerCount = 2 + Math.floor(Math.random() * 3);
+        
+        // --- Layered Cloud Structures (Stratus, Altostratus, Nimbostratus) ---
+        if (baseType === 'stratus' || baseType === 'altostratus' || baseType === 'nimbostratus') {
+          const isAlto = baseType === 'altostratus';
+          const isNimbo = baseType === 'nimbostratus';
+          const layerCount = isNimbo ? 4 : (isAlto ? 3 + Math.floor(Math.random() * 3) : 2 + Math.floor(Math.random() * 3));
+          
           for (let L = 0; L < layerCount; L++) {
-            const radius = 10 + Math.random() * 20;
-            const thickness = 0.7 + Math.random() * 0.8;
-            const geom = new THREE.CylinderGeometry(radius, radius, thickness, 32);
-            const mat = createCloudMaterial();
-            mat.uniforms.density.value = 0.45 + Math.random() * 0.25;
-            mat.uniforms.moisture.value = 0.78 + Math.random() * 0.18;
-            const layer = new THREE.Mesh(geom, mat);
-            // keep the cylinder axis vertical so the layer forms a flat horizontal disk
-            layer.rotation.x = 0;
-            layer.position.y = 0.5 + L * (thickness * 0.6);
-            // subtle grey-white tint for stratus
-            layer.material.uniforms.shadowColor.value = new THREE.Color(0x9aa0a8);
-            layer.material.uniforms.lightColor.value = new THREE.Color(0xffffff);
-            group.add(layer);
-            group.userData.structureElements.push(layer);
+            const radius = (isNimbo ? 28 + Math.random() * 10 : (isAlto ? 18 + Math.random() * 26 : 10 + Math.random() * 20));
+            const thickness = (isNimbo ? 2.0 + Math.random() * 1.2 : (isAlto ? 1.3 + Math.random() * 1.4 : 0.7 + Math.random() * 0.8));
+            // Use wide, flattened spheres for a more volumetric sheet appearance than cylinders
+            const puffCount = isNimbo ? 24 : 16;
+            const yOffset = (L - layerCount / 2) * thickness * 0.8;
+            
+            for (let i = 0; i < puffCount; i++) {
+              const ang = (i / puffCount) * Math.PI * 2 + Math.random() * 0.4;
+              const r = radius * (0.5 + Math.random() * 0.5);
+              const size = thickness * (0.8 + Math.random() * 0.4);
+              
+              let dens = isNimbo ? 0.75 : (isAlto ? 0.65 : 0.5);
+              let moisture = isNimbo ? 0.95 : (isAlto ? 0.85 : 0.7);
+              
+              const pos = new THREE.Vector3(
+                Math.cos(ang) * r,
+                yOffset + (Math.random() - 0.5) * thickness * 0.5,
+                Math.sin(ang) * r
+              );
+              makePuff(size, pos, dens, moisture);
+            }
           }
 
-          // allow stratus to produce light rain occasionally:
           group.userData.canPrecipitate = true;
-          group.userData.precipitationThreshold = 0.85;
-          group.userData.moisture = 0.58 + Math.random() * 0.12;
-          group.userData.alwaysPrecipitate = false;
-          if (this.humidity > 55 && Math.random() < 0.35) {
+          group.userData.precipitationThreshold = isNimbo ? 0.35 : (isAlto ? 0.75 : 0.85);
+          group.userData.moisture = (isNimbo ? 0.85 : (isAlto ? 0.62 + Math.random() * 0.14 : 0.58 + Math.random() * 0.12));
+          group.userData.alwaysPrecipitate = isNimbo;
+          // Set up initial emitter if precipitating
+          if (group.userData.alwaysPrecipitate || (this.humidity > 55 && Math.random() < 0.45)) {
             group.userData.precipitating = true;
-            group.userData.precipitationIntensity = 0.06 + Math.random() * 0.12;
+            group.userData.precipitationIntensity = 0.06 + Math.random() * (isNimbo ? 0.3 : 0.12);
             group.userData.rainEmitter = {
               position: new THREE.Vector3(group.position.x, Math.max(0.6, group.position.y - 1.2), group.position.z),
-              height: 2.0,
-              radius: 4.0,
+              height: isNimbo ? 4.0 : 2.0,
+              radius: isNimbo ? 8.0 : 4.0,
               opacity: 0.6,
               ageFade: 0.0
             };
           }
+          return;
+        }
+        
+        // --- Cirrus (Sprite) ---
+        if (baseType === 'cirrus') {
+          const haloTex = createHaloTexture(256, 'rgba(255,245,220,1.0)');
+          const haloMat = new THREE.SpriteMaterial({ map: haloTex, color: 0xffffff, transparent: true, opacity: 0.0, depthTest: false, blending: THREE.AdditiveBlending });
+          const sprite = new THREE.Sprite(haloMat);
+          sprite.scale.set(14, 14, 1);
+          sprite.position.set(0, 0.2, 0);
+          sprite.renderOrder = 999;
+          group.add(sprite);
+          group.userData.halo = sprite;
+          group.userData.haloTex = haloTex;
+          return;
+        }
+
+        // --- Derecho (Squall Line) ---
+        if (baseType === 'derecho') {
+          group.userData.isSquallLine = true;
+          const bowLength = 80 + Math.random() * 60;
+          const bowWidth = 12 + Math.random() * 6;
+          const curvature = 0.004 + Math.random() * 0.002;
+          group.userData.bow = { length: bowLength, width: bowWidth, curvature, heading: Math.random() * Math.PI * 2 };
+
+          const bowCenter = new THREE.Vector3(0, 0, 0);
+          function bowPosition(s, offsetZ = 0) {
+            const x = (bowLength * 0.5) * s;
+            const z = -Math.pow(s, 2) * bowLength * curvature * 40 + offsetZ;
+            return new THREE.Vector3(x, 0, z);
+          }
+
+          // 1) Leading-edge shelf cloud / arcus band (made of flattened puffs)
+          const shelfSegments = 24;
+          for (let i = 0; i < shelfSegments; i++) {
+            const t = i / (shelfSegments - 1);
+            const s = t * 2 - 1; // [-1,1]
+            const centerPos = bowPosition(s, 0);
+            const segRadius = bowWidth * THREE.MathUtils.lerp(0.7, 1.1, Math.abs(s));
+            const puffCount = 4 + Math.floor(Math.random() * 3);
+            for (let p = 0; p < puffCount; p++) {
+              const ang = (p / puffCount) * Math.PI * 2;
+              const r = segRadius * (0.5 + Math.random() * 0.5);
+              const size = 1.6 + Math.random() * 0.8;
+              const dens = 0.72 + Math.random() * 0.1;
+              const pos = new THREE.Vector3(
+                centerPos.x + Math.cos(ang) * r * 0.8,
+                0.4 + Math.random() * 0.8,
+                centerPos.z + Math.sin(ang) * r * 0.2 // Flattened shape
+              );
+              makePuff(size, pos, dens, 0.92);
+            }
+          }
+          
+          // 2) Embedded convective cores (towers)
+          const coreTowerCount = 6 + Math.floor(Math.random() * 5);
+          for (let i = 0; i < coreTowerCount; i++) {
+            const centerBias = (i < 2);
+            const s = centerBias ? (Math.random() * 0.4 - 0.2) : (Math.random() * 2 - 1);
+            const basePos = bowPosition(s, -0.4);
+
+            const towerHeight = 4.5 + Math.random() * 4.0;
+            const baseRadius = 4.0 + Math.random() * 2.5;
+            const layers = 4 + Math.floor(Math.random() * 3);
+
+            for (let l = 0; l < layers; l++) {
+              const frac = l / Math.max(1, layers - 1);
+              const radius = baseRadius * (1.0 - frac * 0.45);
+              const y = 1.2 + frac * towerHeight + (Math.random() - 0.5) * 0.6;
+              const puffCount = 5 + Math.floor(Math.random() * 4);
+              for (let p = 0; p < puffCount; p++) {
+                const ang = (p / puffCount) * Math.PI * 2 + Math.random() * 0.4;
+                const rr = radius * (0.6 + Math.random() * 0.6);
+                const size = 1.5 + Math.random() * 1.4;
+                makePuff(size, 
+                  new THREE.Vector3(
+                    basePos.x + Math.cos(ang) * rr,
+                    y,
+                    basePos.z + Math.sin(ang) * rr
+                  ), 0.95, 0.96);
+              }
+            }
+          }
+
+          // 3) Trailing stratiform shield (broad, flatter cloud region behind the line)
+          const shieldRadius = bowLength * 0.55;
+          const shieldLayers = 3;
+          for (let l = 0; l < shieldLayers; l++) {
+            const yOffset = l * 0.8 - 1.0;
+            const puffCount = 40;
+            for (let p = 0; p < puffCount; p++) {
+              const ang = Math.random() * Math.PI * 2;
+              const r = shieldRadius * Math.sqrt(Math.random());
+              const size = 1
+            }
+          }
+
+          // 4) Strong, continuous precipitation focused under the bow, with broader shield rain
+          group.userData.canPrecipitate = true;
+          group.userData.alwaysPrecipitate = true;
+          group.userData.precipitating = true;
+          group.userData.precipitationIntensity = 0.75 + Math.random() * 0.2;
+          group.userData.precipitationThreshold = 0.2;
+          group.userData.rainEmitter = {
+            position: new THREE.Vector3(group.position.x, Math.max(0.6, group.position.y - 1.8), group.position.z),
+            height: 4.4,
+            radius: bowLength * 0.55, // covers main bow region
+            opacity: 0.97,
+            ageFade: 0.0
+          };
           return;
         }
 
@@ -740,78 +1134,274 @@
         let basePuffs = 4, maxLayers = 2, baseRadius = 3, verticalScale = 1.0;
         let requiresAnvil = false;
 
-        if (type === 'cumulus_humilis' || type === 'altostratus') {
-            // Fair weather or thin layer
-            basePuffs = 3 + Math.floor(Math.random() * 2);
-            maxLayers = 1;
-            baseRadius = 2 + Math.random() * 1.5;
-            verticalScale = 0.5;
-        } else if (type === 'nimbostratus' || type === 'stratus') {
-            // Layered precipitation cloud (but stratus is handled above)
+        if (type === 'cumulus_humilis') {
+            // Fair-weather cumulus: shallow, wide, flat-bottomed
             basePuffs = 5 + Math.floor(Math.random() * 3);
-            maxLayers = 2;
-            baseRadius = 6 + Math.random() * 4;
-            verticalScale = 0.8;
-        } else if (type === 'cumulus_congestus') {
-            // Developing tower
+            maxLayers = 1;
+            baseRadius = 4.0 + Math.random() * 3.0;
+            verticalScale = 0.5; // very limited vertical growth
+        } else if (type === 'nimbostratus') {
+            // Layered precipitation cloud (deep uniform sheet)
             basePuffs = 8 + Math.floor(Math.random() * 4);
-            maxLayers = 4;
-            baseRadius = 5 + Math.random() * 2.5;
-            verticalScale = 1.8;
+            maxLayers = 3;
+            baseRadius = 10 + Math.random() * 6;
+            verticalScale = 1.2;
+        } else if (type === 'cumulus_congestus') {
+            // Developing towering cumulus with multiple domes
+            basePuffs = 10 + Math.floor(Math.random() * 5);
+            maxLayers = 5 + Math.floor(Math.random() * 2); // deep stacks
+            baseRadius = 5 + Math.random() * 3;
+            verticalScale = 2.5; // strong vertical development
         } else if (type === 'cumulonimbus') {
-            // Massive towering storm with anvil
+            // Deep thunderstorm pillar, anvil-topped
             basePuffs = 12 + Math.floor(Math.random() * 6);
-            maxLayers = 7; // Very tall
-            baseRadius = 8 + Math.random() * 3;
-            verticalScale = 3.0;
+            maxLayers = 8 + Math.floor(Math.random() * 2);
+            baseRadius = (6 + Math.random() * 3) * 1.6;
+            verticalScale = 3.6; // very tall
             requiresAnvil = true;
             group.userData.maxAge = 1200 + Math.random() * 600;
-        } else if (type === 'supercell' || type === 'derecho') {
-            // Largest and most complex storm structure
-            basePuffs = 16 + Math.floor(Math.random() * 10);
-            maxLayers = 10; // Extra tall and layered
-            baseRadius = 14 + Math.random() * 6; // Very wide base
-            verticalScale = 4.5;
+        } else if (type === 'supercell') {
+            // Supercell: sculpted rotating tower with wide base and large anvil
+            basePuffs = 18 + Math.floor(Math.random() * 8);
+            maxLayers = 9 + Math.floor(Math.random() * 2);
+            baseRadius = (7 + Math.random() * 3) * 2.2; // broad base
+            verticalScale = 4.2; // extremely tall
             requiresAnvil = true;
             group.userData.maxAge = 1800 + Math.random() * 900;
+            group.userData.mesocyclone = true;
         }
 
-        // Build the main vertical structure (applies to all non-pyro/stratus)
+        // Introduce a simple shear profile per cloud to add tilt/lean with height
+        // Store shear vector in userData so later evolution can reference it
+        if (!group.userData.shear) {
+          const shearAngle = Math.random() * Math.PI * 2;
+          const shearMag =
+            type === 'supercell'
+              ? 0.9 + Math.random() * 0.7
+              : type === 'cumulonimbus'
+                ? 0.6 + Math.random() * 0.5
+                : type === 'cumulus_congestus'
+                  ? 0.3 + Math.random() * 0.3
+                  : 0.1 + Math.random() * 0.2;
+          group.userData.shear = {
+            dir: new THREE.Vector2(Math.cos(shearAngle), Math.sin(shearAngle)),
+            mag: shearMag
+          };
+        }
+
+        // Optionally create 1–3 "core towers" for big storms: these are vertical columns with extra detail
+        const coreTowerCount =
+          (type === 'cumulonimbus' || type === 'supercell')
+            ? 2 + Math.floor(Math.random() * 2)
+            : (type === 'cumulus_congestus' ? 1 + Math.floor(Math.random() * 2) : 0);
+        const coreTowers = [];
+        for (let i = 0; i < coreTowerCount; i++) {
+          const ang = (i / Math.max(1, coreTowerCount)) * Math.PI * 2 + Math.random() * 0.6;
+          const r = baseRadius * (0.35 + Math.random() * 0.4);
+          coreTowers.push({
+            baseOffset: new THREE.Vector3(
+              Math.cos(ang) * r,
+              0,
+              Math.sin(ang) * r
+            ),
+            radiusScale: 0.65 + Math.random() * 0.4,
+            heightBias: 0.8 + Math.random() * 0.4
+          });
+        }
+
+        // Build the main vertical structure (applies to all non-pyro/stratus/derecho)
         if (type !== 'cirrus') {
             for (let l = 0; l < maxLayers; l++) {
+                // normalized layer index [0,1]
+                const layerFrac = l / Math.max(1, maxLayers - 1);
+
+                // Apply shear: higher layers are shifted more in the shear direction
+                let shearOffset = new THREE.Vector3(0, 0, 0);
+                if (group.userData.shear) {
+                  const sMag = group.userData.shear.mag;
+                  const sDir = group.userData.shear.dir;
+                  // supercells tilt more aggressively with height
+                  const heightTilt = THREE.MathUtils.lerp(0.0, (type === 'supercell' ? 8.0 : 5.0) * sMag, Math.pow(layerFrac, 1.1));
+                  shearOffset.set(
+                    sDir.x * heightTilt,
+                    0,
+                    sDir.y * heightTilt
+                  );
+                }
+
                 // Ensure bottom layer is wider than top
-                const layerRadius = baseRadius * (1.0 - Math.pow(l / maxLayers, 1.5) * 0.7);
+                const layerRadius =
+                  baseRadius *
+                  (1.0 - Math.pow(layerFrac, 1.4) * 0.7) *
+                  (1.0 + (type === 'supercell' ? 0.2 * Math.sin(layerFrac * Math.PI * 2.0) : 0.0));
+
                 // Vertical spacing depends on verticalScale
-                const layerY = l * 3.0 * verticalScale / maxLayers; 
-                // Puff size scales with radius
-                const puffSize = (1.5 + Math.random() * 1.5) * baseRadius / 8; 
+                const layerY = l * 2.4 * verticalScale / Math.max(1, maxLayers - 0.5);
 
-                for (let i = 0; i < basePuffs; i++) {
-                    const a = (i / basePuffs) * Math.PI * 2 + l * 0.6;
-                    const r = Math.random() * layerRadius * 0.8;
-                    const dens = THREE.MathUtils.lerp(0.85, 0.65, l / maxLayers) + Math.random() * 0.1;
+                // Puff size scales with radius; smaller higher up for congestus / nimbus detail
+                const sizeFactor = (type === 'cumulus_congestus' || type === 'cumulonimbus' || type === 'supercell') ? 0.7 : 1.0;
+                const basePuffSize = (1.4 + Math.random() * 1.6) * baseRadius / 8 * sizeFactor;
 
-                    makePuff(puffSize, new THREE.Vector3(Math.cos(a) * r, layerY + Math.random() * 1.0, Math.sin(a) * r), dens);
+                const puffsThisLayer =
+                  type === 'cumulus_humilis'
+                    ? basePuffs
+                    : basePuffs + Math.floor(l * 0.4); // more domes higher in deep towers
+
+                // Randomly carve a few "entrainment pockets" (holes) in large storm layers for more texture
+                const entrainHoles =
+                  (type === 'cumulonimbus' || type === 'supercell') && layerRadius > baseRadius * 0.7
+                    ? 1 + Math.floor(Math.random() * 3)
+                    : 0;
+                const entrainAngles = [];
+                for (let eh = 0; eh < entrainHoles; eh++) {
+                  entrainAngles.push(Math.random() * Math.PI * 2);
+                }
+                const entrainWidth = Math.PI / 6;
+
+                for (let i = 0; i < puffsThisLayer; i++) {
+                    const baseAngle = (i / puffsThisLayer) * Math.PI * 2 + l * 0.5;
+                    let a = baseAngle + (Math.random() - 0.5) * 0.25;
+
+                    // Skip some puffs near entrainment angles to create visible gaps
+                    let skip = false;
+                    for (let ea = 0; ea < entrainAngles.length; ea++) {
+                      const dAng = Math.abs(angleDifference(a, entrainAngles[ea]));
+                      if (dAng < entrainWidth * (0.7 + Math.random() * 0.6)) {
+                        if (Math.random() < 0.5) skip = true;
+                        break;
+                      }
+                    }
+                    if (skip) continue;
+
+                    const r =
+                      Math.random() * layerRadius *
+                      (type === 'cumulus_humilis' ? 1.0 : 0.85) *
+                      (0.9 + Math.random() * 0.25);
+
+                    // Base darkening for deep convection bottom layer
+                    const baseDarken = (type === 'cumulus_congestus' || type === 'cumulonimbus' || type === 'supercell') && l === 0;
+                    const densBase = baseDarken ? 0.9 : 0.8;
+                    let dens =
+                      THREE.MathUtils.lerp(densBase, 0.65, layerFrac) +
+                      Math.random() * 0.1;
+
+                    // Flat base for humilis, stronger relief for congestus / nimbus
+                    const yJitter =
+                      type === 'cumulus_humilis'
+                        ? 0.2
+                        : (type === 'cumulus_congestus' ? 0.8 : 1.0);
+
+                    // Give top layers small "turrets" for congestus/nimbus
+                    let puffSize = basePuffSize * (0.9 + Math.random() * 0.3);
+                    if ((type === 'cumulus_congestus' || type === 'cumulonimbus' || type === 'supercell') && layerFrac > 0.55) {
+                      puffSize *= 0.8 + Math.random() * 0.6;
+                      dens += 0.05;
+                    }
+
+                    const pos = new THREE.Vector3(
+                      Math.cos(a) * r,
+                      layerY + Math.random() * yJitter,
+                      Math.sin(a) * r
+                    ).add(shearOffset);
+
+                    // Slightly bias some puffs onto core towers for towering updraft pillars
+                    if (coreTowers.length && (type === 'cumulonimbus' || type === 'supercell' || type === 'cumulus_congestus')) {
+                      if (Math.random() < 0.25) {
+                        const tIndex = Math.floor(Math.random() * coreTowers.length);
+                        const tower = coreTowers[tIndex];
+                        const towerFrac = Math.pow(layerFrac, tower.heightBias);
+                        const towerRadius = layerRadius * tower.radiusScale * 0.7;
+                        const towerAngle = tower.baseOffset.angleTo
+                          ? tower.baseOffset
+                          : null;
+                        const tAng = towerAngle
+                          ? towerAngle
+                          : (Math.random() * Math.PI * 2);
+                        const tPos = new THREE.Vector3(
+                          tower.baseOffset.x + Math.cos(tAng) * towerRadius * 0.25,
+                          layerY * tower.heightBias + Math.random() * 0.6,
+                          tower.baseOffset.z + Math.sin(tAng) * towerRadius * 0.25
+                        );
+                        pos.copy(tPos.add(shearOffset));
+                        puffSize *= 1.1;
+                        dens += 0.05;
+                      }
+                    }
+
+                    makePuff(
+                      puffSize,
+                      pos,
+                      dens
+                    );
                 }
             }
+
+            // Slight extra low-level base disc for congestus / nimbus to hint dark base
+            if (type === 'cumulus_congestus' || type === 'cumulonimbus' || type === 'supercell') {
+              const baseDiscRadius = baseRadius * 0.9;
+              const baseDiscGeom = new THREE.CylinderGeometry(baseDiscRadius, baseDiscRadius, 0.8, 20);
+              const baseDiscMat = createCloudMaterial();
+              baseDiscMat.uniforms.density.value = 0.0;
+              baseDiscMat.userData = baseDiscMat.userData || {};
+              baseDiscMat.userData.targetDensity = 0.9;
+              baseDiscMat.uniforms.moisture.value = 0.95;
+              baseDiscMat.uniforms.shadowColor.value = new THREE.Color(0x3b3f46);
+              baseDiscMat.uniforms.lightColor.value = new THREE.Color(0xf0f0f0);
+              const baseDisc = new THREE.Mesh(baseDiscGeom, baseDiscMat);
+              baseDisc.position.y = 0.0;
+              baseDisc.position.add(group.userData.shear ? new THREE.Vector3(group.userData.shear.dir.x, 0, group.userData.shear.dir.y).multiplyScalar(0.5) : new THREE.Vector3());
+              group.add(baseDisc);
+              group.userData.structureElements.push(baseDisc);
+            }
+
             group.userData.verticalGrowth = verticalScale; // Track initial scale
 
+            // Add overshooting top dome for the strongest storms
+            if (requiresAnvil && (type === 'cumulonimbus' || type === 'supercell')) {
+              const overshootSize = baseRadius * (type === 'supercell' ? 1.2 : 0.9);
+              const overshoot = new THREE.Mesh(
+                new THREE.SphereGeometry(overshootSize, 18, 18),
+                createCloudMaterial()
+              );
+              overshoot.material.uniforms.density.value = 0.0;
+              overshoot.userData = overshoot.userData || {};
+              overshoot.userData.targetDensity = 0.82;
+              overshoot.material.uniforms.moisture.value = 0.96;
+              overshoot.material.uniforms.shadowColor.value = new THREE.Color(0x4a4f58);
+              overshoot.material.uniforms.lightColor.value = new THREE.Color(0xffffff);
+              overshoot.position.set(
+                (group.userData.shear ? group.userData.shear.dir.x * 4.0 : 0),
+                maxLayers * 2.4 * verticalScale / Math.max(1, maxLayers - 0.5) + 2.0,
+                (group.userData.shear ? group.userData.shear.dir.y * 4.0 : 0)
+              );
+              group.add(overshoot);
+              group.userData.structureElements.push(overshoot);
+            }
+
             if (requiresAnvil) {
-                // Supercells get a slightly larger anvil
-                const anvilRadius = baseRadius * 1.5 * (type === 'supercell' || type === 'derecho' ? 1.4 : 1.0);
+                // Supercells get a significantly larger anvil
+                const anvilScaleBoost = (type === 'supercell' ? 2.1 : 1.6);
+                const anvilRadius = baseRadius * anvilScaleBoost;
                 // Anvil sits high up, above the highest puff layer
-                const anvilY = maxLayers * 3.0 * verticalScale / maxLayers; 
+                const anvilY = maxLayers * 2.4 * verticalScale / Math.max(1, maxLayers - 0.5);
 
                 // Note: using anvilRadius * 0.8 as top radius and anvilRadius * 1.0 as bottom radius to simulate spreading/flared anvil top geometry
                 const anvilGeom = new THREE.CylinderGeometry(anvilRadius * 0.8, anvilRadius * 1.0, 1.0, 32);
                 const anvilMat = createCloudMaterial();
-                anvilMat.uniforms.density.value = 0.72;
+                // initialize anvil fade-in
+                anvilMat.uniforms.density.value = 0.0;
+                anvilMat.userData = anvilMat.userData || {};
+                anvilMat.userData.targetDensity = 0.72;
                 anvilMat.uniforms.moisture.value = 0.82;
                 anvilMat.uniforms.shadowColor.value = new THREE.Color(0x7a7f88);
                 anvilMat.uniforms.lightColor.value = new THREE.Color(0xffffff);
                 const anvil = new THREE.Mesh(anvilGeom, anvilMat);
-                // Move anvil slightly above the structure top
-                anvil.position.y = anvilY + 0.5 * verticalScale; 
+                // Move anvil slightly above the structure top and in the shear direction
+                anvil.position.y = anvilY + 0.5 * verticalScale;
+                if (group.userData.shear) {
+                  anvil.position.x += group.userData.shear.dir.x * group.userData.shear.mag * 4.0;
+                  anvil.position.z += group.userData.shear.dir.y * group.userData.shear.mag * 4.0;
+                }
                 group.add(anvil);
                 group.userData.anvil = anvil;
                 group.userData.anvilHeight = anvil.position.y;
@@ -824,6 +1414,41 @@
                 scene.add(pl);
                 group.userData.anvilLight = pl;
                 group.userData.anvilPrecipIntensity = THREE.MathUtils.clamp(group.userData.precipitationIntensity + 0.25, 0, 1.0);
+            }
+
+            // For supercells, add a subtle flanking line of smaller congestus towers feeding into the main updraft
+            if (type === 'supercell') {
+              const flankCount = 3 + Math.floor(Math.random() * 3);
+              const flankSide = (Math.random() < 0.5 ? -1 : 1);
+              for (let fi = 0; fi < flankCount; fi++) {
+                const frac = fi / Math.max(1, flankCount - 1);
+                const offsetDist = baseRadius * (1.2 + frac * 1.4);
+                const baseY = 0.4 + frac * 2.0;
+                const ang = (group.userData.shear ? Math.atan2(group.userData.shear.dir.y, group.userData.shear.dir.x) + flankSide * Math.PI / 2 : Math.random() * Math.PI * 2);
+                const flankPos = new THREE.Vector3(
+                  Math.cos(ang) * offsetDist,
+                  baseY,
+                  Math.sin(ang) * offsetDist
+                );
+                const towerLayers = 2 + Math.floor(Math.random() * 2);
+                for (let fl = 0; fl < towerLayers; fl++) {
+                  const tFrac = fl / Math.max(1, towerLayers - 1);
+                  const tRadius = baseRadius * 0.4 * (1.0 - tFrac * 0.6);
+                  const puffCount = 3 + Math.floor(Math.random() * 3);
+                  for (let pi = 0; pi < puffCount; pi++) {
+                    const a = (pi / puffCount) * Math.PI * 2 + Math.random() * 0.6;
+                    const r = tRadius * (0.5 + Math.random() * 0.5);
+                    const size = baseRadius * 0.25 * (0.9 + Math.random() * 0.4);
+                    const dens = 0.78 + Math.random() * 0.12;
+                    const pos = new THREE.Vector3(
+                      flankPos.x + Math.cos(a) * r,
+                      flankPos.y + tFrac * 2.0 + Math.random() * 0.5,
+                      flankPos.z + Math.sin(a) * r
+                    );
+                    makePuff(size, pos, dens);
+                  }
+                }
+              }
             }
         }
         
@@ -838,6 +1463,20 @@
           group.add(sprite);
           group.userData.halo = sprite;
           group.userData.haloTex = haloTex;
+        }
+        // If this cloud was flagged pyro, bias its moisture/precipitation/heavy-flash potential
+        if (group.userData && group.userData.pyro) {
+          group.userData.moisture = Math.min(1.0, (group.userData.moisture || 0.5) + 0.18 + Math.random()*0.08);
+          // make pyro clouds more likely to precipitate strongly and have heavier emitters
+          group.userData.precipitating = true;
+          group.userData.precipitationIntensity = THREE.MathUtils.clamp(0.45 + Math.random() * 0.35, 0.35, 1.0);
+          group.userData.rainEmitter = {
+            position: new THREE.Vector3(group.position.x, Math.max(0.6, group.position.y - 2.2), group.position.z),
+            height: 5.0,
+            radius: 8.0 + (group.userData.baseScale || 1.0) * 3.0,
+            opacity: 1.0,
+            ageFade: 0.0
+          };
         }
       }
       // Cloud type evolution from fair-weather to deep convection
@@ -883,7 +1522,9 @@
             
             const anvilGeom = new THREE.CylinderGeometry(anvilRadius, anvilRadius * 1.1, 1.0, 32);
             const anvilMat = createCloudMaterial();
-            anvilMat.uniforms.density.value = 0.72;
+            anvilMat.uniforms.density.value = 0.0;
+            anvilMat.userData = anvilMat.userData || {};
+            anvilMat.userData.targetDensity = 0.72;
             anvilMat.uniforms.moisture.value = 0.82;
             anvilMat.uniforms.shadowColor.value = new THREE.Color(0x7a7f88);
             anvilMat.uniforms.lightColor.value = new THREE.Color(0xffffff);
@@ -1008,9 +1649,20 @@
           }
           
           c.userData.structureElements.forEach(e => {
-            e.material.uniforms.moisture.value = c.userData.moisture;
-            e.material.uniforms.time.value = Date.now() * 0.001;
-            e.material.uniforms.density.value = Math.max(0.35, e.material.uniforms.density.value);
+            // if this element was set up with a target density, smoothly interpolate its density toward that target
+            const mat = e.material;
+            if (mat) {
+              const current = mat.uniforms.density.value !== undefined ? mat.uniforms.density.value : 1.0;
+              // determine target density (element-level userData or material-level userData)
+              let target = 1.0;
+              if (e.userData && e.userData.targetDensity !== undefined) target = e.userData.targetDensity;
+              else if (mat.userData && mat.userData.targetDensity !== undefined) target = mat.userData.targetDensity;
+              // compute lerp factor scaled by dt to keep animation framerate independent
+              const lerpFactor = Math.min(1, deltaTime * 1.2);
+              mat.uniforms.density.value = THREE.MathUtils.lerp(current, target, lerpFactor);
+              mat.uniforms.moisture.value = c.userData.moisture;
+              if (mat.uniforms.time) mat.uniforms.time.value = Date.now() * 0.001;
+            }
           });
           
           const wind = windSystem.getWindAtAltitude(c.position.y);
@@ -1065,28 +1717,195 @@
             // initialize lightning container
             if (!c.userData._lightnings) c.userData._lightnings = [];
             // lightning chance scales with intensity and type
-            const baseChance = (c.userData.type === 'cumulonimbus') ? 0.06 : (c.userData.type === 'cumulus_congestus' ? 0.015 : 0);
+            // increased lightning odds for deep convection
+            let baseChance = 0;
+            if (c.userData.type === 'cumulonimbus') baseChance = 0.18;
+            else if (c.userData.type === 'supercell') baseChance = 0.12;
+            else if (c.userData.type === 'cumulus_congestus') baseChance = 0.06;
             if (baseChance > 0 && Math.random() < baseChance * intensity * deltaTime * 60) {
-              // spawn a localized flash (PointLight + short-lived emissive pulse)
-              const flashPower = (c.userData.type === 'cumulonimbus') ? (6.0 + Math.random() * 6.0) : (1.2 + Math.random() * 1.6); // cumulus_congestus weaker
-              const flashRange = (c.userData.type === 'cumulonimbus') ? 18 + Math.random() * 12 : 6 + Math.random() * 6;
-              const flash = new THREE.PointLight(0xffffff, flashPower, flashRange, 2);
-              // place flash somewhere near cloud base/top for visual effect
-              const flashPos = new THREE.Vector3(
-                c.position.x + (Math.random() - 0.5) * (emitter ? emitter.radius : 6),
-                c.position.y - (Math.random() * Math.min(6, c.scale.y * 0.8)),
-                c.position.z + (Math.random() - 0.5) * (emitter ? emitter.radius : 6)
+              // choose lightning variant
+              // IC is most common, then CG, then CC and CA
+              const rKind = Math.random();
+              let kind = 'IC';
+              if (rKind < 0.55) kind = 'IC';
+              else if (rKind < 0.85) kind = 'CG';
+              else if (rKind < 0.95) kind = 'CC';
+              else kind = 'CA';
+
+              // if this is a pyro-cloud, increase odds of volcanic lightning and bias to orange CG/IC flashes
+              let volcanicVariant = false;
+              if (c.userData.pyro) {
+                // raise chance for volcanic-style flash and bias to CG/IC
+                if (Math.random() < 0.60) volcanicVariant = true;
+                if (Math.random() < 0.45) kind = (Math.random() < 0.7 ? 'IC' : 'CG');
+              }
+
+              // determine start / end positions for the bolt
+              const cloudCenter = c.position.clone();
+              let startPos = new THREE.Vector3();
+              let endPos = new THREE.Vector3();
+              let isPositiveCG = false;
+
+              // helper: random point near cloud at a given relative height
+              const cloudRadius = (c.scale.x + c.scale.z) * 0.5;
+              const randAroundCloud = (relY=0.0, spread=1.0) => {
+                const ang = Math.random() * Math.PI * 2;
+                const r = cloudRadius * (0.3 + Math.random() * 0.6) * spread;
+                return new THREE.Vector3(
+                  cloudCenter.x + Math.cos(ang) * r,
+                  cloudCenter.y + relY,
+                  cloudCenter.z + Math.sin(ang) * r
+                );
+              };
+
+              if (kind === 'IC') {
+                // Intra-cloud: entirely inside / across this cloud
+                startPos = randAroundCloud(0, 0.7);
+                endPos = randAroundCloud(0.6 * c.scale.y * 0.3, 0.9);
+              } else if (kind === 'CG') {
+                // Cloud-to-ground: from base or anvil to ground
+                const fromAnvil = !!c.userData.anvil && (c.userData.type === 'supercell' || Math.random() < 0.4);
+                const baseDrop = fromAnvil ? c.scale.y * 0.5 : c.scale.y * 0.8;
+                startPos = randAroundCloud(fromAnvil ? baseDrop : -baseDrop * 0.25, 0.3);
+                endPos = new THREE.Vector3(startPos.x + (Math.random() - 0.5) * 3.0, 0.6, startPos.z + (Math.random() - 0.5) * 3.0);
+                // positive CG: stronger, from higher levels
+                isPositiveCG = fromAnvil && Math.random() < 0.55;
+                // volcanic CG tends to come from plume columns (slightly offset)
+                if (volcanicVariant) {
+                  // nudge bolt to originate deeper in plume area
+                  startPos.x += (Math.random()-0.5)*2.0;
+                  startPos.z += (Math.random()-0.5)*2.0;
+                }
+              } else if (kind === 'CC') {
+                // Cloud-to-cloud: connect to another nearby storm cell if possible
+                const partners = this.clouds.filter(o =>
+                  o !== c &&
+                  o.userData &&
+                  (o.userData.type === 'cumulonimbus' || o.userData.type === 'supercell' || o.userData.type === 'cumulus_congestus') &&
+                  o.position.distanceTo(c.position) < 220
+                );
+                let target = partners.length ? partners[Math.floor(Math.random() * partners.length)] : null;
+                if (target) {
+                  const targetCenter = target.position.clone();
+                  startPos = randAroundCloud(0.3 * c.scale.y * 0.3, 0.8);
+                  const tRad = (target.scale.x + target.scale.z) * 0.5;
+                  const ang = Math.random() * Math.PI * 2;
+                  const r = tRad * (0.3 + Math.random() * 0.6);
+                  endPos = new THREE.Vector3(
+                    targetCenter.x + Math.cos(ang) * r,
+                    targetCenter.y + 0.3 * target.scale.y * 0.3,
+                    targetCenter.z + Math.sin(ang) * r
+                  );
+                } else {
+                  // fallback to intra-cloud
+                  kind = 'IC';
+                  startPos = randAroundCloud(0, 0.7);
+                  endPos = randAroundCloud(0.6 * c.scale.y * 0.3, 0.9);
+                }
+              } else if (kind === 'CA') {
+                // Cloud-to-air: one end sticks out into clear air near the cloud edge
+                startPos = randAroundCloud(0.2 * c.scale.y * 0.3, 0.9);
+                const dirAng = Math.random() * Math.PI * 2;
+                const outDist = cloudRadius * (1.2 + Math.random() * 0.8);
+                endPos = new THREE.Vector3(
+                  startPos.x + Math.cos(dirAng) * outDist,
+                  startPos.y + (Math.random() - 0.2) * 10.0,
+                  startPos.z + Math.sin(dirAng) * outDist
+                );
+              }
+
+              // flash strength / duration depends on type
+              let flashPower;
+              let flashRange;
+              let life;
+              if (kind === 'IC') {
+                flashPower = (c.userData.type === 'cumulonimbus') ? (4.0 + Math.random() * 4.0) : (1.2 + Math.random() * 1.6);
+                flashRange = (c.userData.type === 'cumulonimbus') ? 16 + Math.random() * 10 : 8 + Math.random() * 6;
+                life = 0.18 + Math.random() * 0.3;
+              } else if (kind === 'CG') {
+                if (isPositiveCG) {
+                  flashPower = 10.0 + Math.random() * 8.0;
+                  flashRange = 28 + Math.random() * 14;
+                  life = 0.55 + Math.random() * 0.4;
+                } else {
+                  flashPower = 6.0 + Math.random() * 5.0;
+                  flashRange = 20 + Math.random() * 10;
+                  life = 0.25 + Math.random() * 0.35;
+                }
+              } else if (kind === 'CC') {
+                flashPower = 5.0 + Math.random() * 4.0;
+                flashRange = 24 + Math.random() * 12;
+                life = 0.35 + Math.random() * 0.4;
+              } else { // CA
+                flashPower = 3.0 + Math.random() * 3.0;
+                flashRange = 20 + Math.random() * 10;
+                life = 0.25 + Math.random() * 0.35;
+              }
+
+              // adjust for volcanic variant: orange, smokier, shorter range but punchy near plume
+              let flashColor = 0xffffff;
+              if (volcanicVariant) {
+                flashColor = 0xff8a2b; // volcanic orange
+                flashPower *= 0.9;
+                flashRange *= 0.7;
+                life *= 0.9;
+              } else {
+                flashColor = isPositiveCG ? 0xfff0cc : 0xffffee;
+              }
+
+              // spawn a localized flash (PointLight + optional line bolt)
+              const flash = new THREE.PointLight(
+                flashColor,
+                flashPower,
+                flashRange,
+                2
               );
-              flash.position.copy(flashPos);
-              flash.userData = { life: (c.userData.type === 'cumulonimbus') ? (0.45 + Math.random() * 0.55) : (0.12 + Math.random() * 0.28), age: 0, initialIntensity: flashPower };
+              // place flash roughly halfway along bolt path
+              const mid = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+              flash.position.copy(mid);
+              flash.userData = {
+                life,
+                age: 0,
+                initialIntensity: flashPower,
+                kind,
+                isPositiveCG,
+                volcanic: volcanicVariant
+              };
+
+              // create visible bolt for CG / CC / CA, occasional for vivid IC
+              let needsLine = (kind === 'CG' || kind === 'CC' || kind === 'CA');
+              if (!needsLine && kind === 'IC' && Math.random() < 0.25) needsLine = true;
+
+              if (needsLine) {
+                const boltGeom = new THREE.BufferGeometry().setFromPoints([startPos, endPos]);
+                const boltMat = new THREE.LineBasicMaterial({
+                  color: volcanicVariant ? 0xffc08a : (isPositiveCG ? 0xffe0aa : 0xffffee),
+                  transparent: true,
+                  opacity: 1.0,
+                  linewidth: 1
+                });
+                const bolt = new THREE.Line(boltGeom, boltMat);
+                bolt.userData = {
+                  life,
+                  age: 0,
+                  kind,
+                  isPositiveCG,
+                  volcanic: volcanicVariant
+                };
+                scene.add(bolt);
+                flash.userData.line = bolt;
+              }
+
               scene.add(flash);
               c.userData._lightnings.push(flash);
-              // brief camera flash if nearby
-              const distCam = flashPos.distanceTo(camera.position);
-              if (distCam < 30) {
-                const camBoost = Math.min(0.6, (30 - distCam) / 30 * (flashPower * 0.06)) * 5.0; // amplified flash shake
+
+              // brief camera flash if nearby (stronger for CG)
+              const distCam = mid.distanceTo(camera.position);
+              if (distCam < 40) {
+                const baseShake = (kind === 'CG' ? 0.9 : (kind === 'CC' ? 0.6 : 0.4));
+                const camBoost = Math.min(0.8, (40 - distCam) / 40 * (flashPower * 0.05)) * baseShake * 5.0;
                 camera.position.x += (Math.random() - 0.5) * camBoost;
-                camera.position.y += (Math.random() - 0.5) * (camBoost * 0.5);
+                camera.position.y += (Math.random() - 0.5) * (camBoost * 0.7);
               }
             }
           } else {
@@ -1131,7 +1950,26 @@
               // quick intensity decay curve
               const tL = L.userData.age / Math.max(0.0001, L.userData.life);
               L.intensity = Math.max(0, L.userData.initialIntensity * (1.0 - tL * 1.6));
+              // fade bolt line if present
+              if (L.userData.line && L.userData.line.material) {
+                const line = L.userData.line;
+                const lm = line.material;
+                lm.opacity = Math.max(0, 1.0 - tL * 1.4);
+                if (tL >= 1.0 || lm.opacity <= 0.02) {
+                  scene.remove(line);
+                  if (line.geometry) line.geometry.dispose();
+                  if (line.material) line.material.dispose();
+                  L.userData.line = null;
+                }
+              }
               if (tL >= 1.0 || L.intensity <= 0.01) {
+                // clean up any remaining line
+                if (L.userData.line) {
+                  const line = L.userData.line;
+                  scene.remove(line);
+                  if (line.geometry) line.geometry.dispose();
+                  if (line.material) line.material.dispose();
+                }
                 scene.remove(L);
                 if (L.dispose) L.dispose();
                 c.userData._lightnings.splice(li, 1);
@@ -1182,7 +2020,8 @@
               vColor = iColor;
               vVis = vis;
               vUv = uv;
-              vec3 localPos = position * vec3(scale * 0.55, scale * 1.6, 1.0);
+              // stretch instanced quads vertically to create streak effect
+              vec3 localPos = position * vec3(scale * 0.35, scale * 3.2, 1.0);
               vec3 pos = localPos + offset;
               vec4 mv = modelViewMatrix * vec4(pos, 1.0);
               gl_Position = projectionMatrix * mv;
@@ -1192,15 +2031,16 @@
             varying float vVis;
             varying vec2 vUv;
             void main(){
-              vec2 p = (vUv - 0.5) * vec2(0.85, 1.0);
+              vec2 p = (vUv - 0.5) * vec2(0.5, 1.2);
               float dist = length(p * vec2(0.85, 1.0));
               float tip = smoothstep(0.9, 0.06, p.y + 0.6);
               float streak = smoothstep(0.98, 0.0, abs(p.x)) * smoothstep(1.0, -0.2, p.y);
-              float alpha = smoothstep(0.9, 0.35, 1.0 - dist) * tip;
-              alpha *= smoothstep(0.45, 0.10, dist);
-              alpha = max(alpha, streak * 0.9);
-              float highlight = smoothstep(0.0, 0.6, 1.0 - length((vUv - vec2(0.44,0.72)) * vec2(1.2,0.6)));
-              vec3 color = mix(vColor * 0.9, vec3(1.0,1.0,1.0), highlight * 0.28);
+              // sharpen streak core and reduce roundness to appear more like falling drops
+              float alpha = smoothstep(0.9, 0.25, 1.0 - dist) * tip;
+              alpha *= smoothstep(0.45, 0.08, dist);
+              alpha = max(alpha, streak * 0.98);
+              float highlight = smoothstep(0.0, 0.5, 1.0 - length((vUv - vec2(0.44,0.72)) * vec2(1.0,0.5)));
+              vec3 color = mix(vColor * 0.9, vec3(1.0,1.0,1.0), highlight * 0.36);
               gl_FragColor = vec4(color, alpha * vVis);
               if (gl_FragColor.a < 0.01) discard;
             }`,
@@ -1335,6 +2175,24 @@
           if (this.available.length === 0) return;
         }
         if (this.available.length === 0) return;
+        // tweak defaults for raindrops to make them thinner and faster
+        if (type === 'rain') {
+          size = size * 0.75;
+          velY = (velY !== undefined) ? velY : -6.0 - Math.random() * 3.0;
+          color = { r: 0.22 + Math.random()*0.12, g: 0.45 + Math.random()*0.1, b: 0.82 + Math.random()*0.06 };
+        } else if (type === 'sleet') {
+          size = size * 0.9;
+          velY = velY || -3.0;
+          color = { r:0.5,g:0.6,b:0.85 };
+        } else if (type === 'snow') {
+          size = size * 1.8;
+          velY = velY || -1.0;
+          color = { r:1,g:1,b:1 };
+        } else if (type === 'hail') {
+          size = size || 0.6;
+          velY = velY || -9.0;
+          color = { r:1,g:1,b:1 };
+        }
         const id = this.available.pop();
         this.droplets[id] = {
           pos: new THREE.Vector3(x, y, z),
@@ -1381,13 +2239,16 @@
             const top = cloudPos.y + (cloud.scale.y * 0.4);
             const y = THREE.MathUtils.lerp(top, Math.max(0.6, cloudPos.y - cloud.scale.y * 0.3), Math.random());
             let type = 'rain', size = 0.28, initVel = -4.0;
-            // hail only from cumulonimbus or supercell
+            // hail only from cumulonimbus or supercell, and respect user allowHail toggle
             const isSevere = (cloud.userData.type === 'supercell' || cloud.userData.type === 'cumulonimbus');
             const temp = state.controls.temperature;
-            
-            // reintroduce hail spawning under very strong convection
-            // reduce hail spawn rate (approx. 50% reduction)
-            if (isSevere && Math.random() < 0.009) {
+            // hail spawn: very low base chance, moderately increased for severe storms and pyro-clouds
+            let hailChance = 0.001; // tiny base chance to avoid ubiquitous hail
+            if (isSevere) hailChance = 0.007;
+            if (isSevere && cloud.userData && cloud.userData.pyro) hailChance = 0.02; // stronger for volcanic+severe
+            // respect global hail toggle
+            if (!state.controls.allowHail) hailChance = 0.0;
+            if (Math.random() < hailChance) {
               type = 'hail';
               size = 0.36 + Math.random() * 0.8;
               initVel = -8.0;
@@ -1417,8 +2278,8 @@
             const shaftRadius = Math.max(0.5, emitter.radius * 0.9);
 
             if (!shaft) {
-              // create a vertical cylinder (open-sided) so shader's UV.y maps along height
-              const geom = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftHeight, 18, 1, true);
+              // create a tapered shaft by using a cylinder with smaller top radius (cone-like taper)
+              const geom = new THREE.CylinderGeometry(shaftRadius * 0.26, shaftRadius, shaftHeight, 18, 1, true);
               const mat = this.rainShaftMaterialFactory();
               shaft = new THREE.Mesh(geom, mat);
               shaft.userData.isShaft = true;
@@ -1428,24 +2289,35 @@
             } else {
               // replace geometry to match updated radius/height (dispose old)
               if (shaft.geometry) shaft.geometry.dispose();
-              shaft.geometry = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftHeight, 18, 1, true);
+              // keep tapered profile on updates as well
+              shaft.geometry = new THREE.CylinderGeometry(shaftRadius * 0.26, shaftRadius, shaftHeight, 18, 1, true);
             }
 
             // position the cylinder so its top aligns roughly with emitterTopY and bottom meets groundY
             shaft.position.set(emitter.position.x, groundY + shaftHeight * 0.5, emitter.position.z);
-            // orient cylinder so its axis is vertical (default) but allow a slight slant by rotating around X/Z based on wind
-            const windAtTop = windSystem.getWindAtAltitude(Math.max(1.0, emitterTopY));
-            // small slant angle derived from wind vector (kept subtle)
-            const slantX = THREE.MathUtils.clamp(-windAtTop.y * 0.06, -0.25, 0.25);
-            const slantZ = THREE.MathUtils.clamp(windAtTop.x * 0.06, -0.25, 0.25);
+            // orient cylinder so its axis is vertical (default) but allow a stronger slant by rotating around X/Z based on mid-level wind
+            const midLevelAlt = Math.max(1.0, groundY + shaftHeight * 0.5);
+            const windAtMid = windSystem.getWindAtAltitude(midLevelAlt);
+            // small slant angle derived from wind vector, slightly stronger to show tilt
+            const slantX = THREE.MathUtils.clamp(-windAtMid.y * 0.14, -0.5, 0.5);
+            const slantZ = THREE.MathUtils.clamp(windAtMid.x * 0.14, -0.5, 0.5);
             shaft.rotation.set(slantX, 0, slantZ);
+
+            // estimate virga strength: more likely when humidity is low and intensity is modest
+            const envHumidity = state.controls.humidity || 0;
+            const dryness = THREE.MathUtils.clamp((60 - envHumidity) / 30, 0.0, 1.0);
+            const virgaStrength = THREE.MathUtils.clamp(dryness * (1.0 - shaftIntensity) * 1.4, 0.0, 1.0);
 
             // update shader uniforms to animate streaks along the cylinder surface
             if (shaft.material && shaft.material.uniforms) {
               shaft.material.uniforms.uTime.value = Date.now() * 0.001;
               shaft.material.uniforms.uIntensity.value = 0.35 + shaftIntensity * 1.6;
               shaft.material.uniforms.uColor.value = new THREE.Color(0x4aa0ff);
-              shaft.material.uniforms.uWind.value = new THREE.Vector2(windAtTop.x * state.controls.windSpeed * 3.0, windAtTop.y * state.controls.windSpeed * 3.0);
+              shaft.material.uniforms.uWind.value = new THREE.Vector2(
+                windAtMid.x * state.controls.windSpeed * 3.0,
+                windAtMid.y * state.controls.windSpeed * 3.0
+              );
+              shaft.material.uniforms.uVirga.value = virgaStrength;
             }
             shaft.visible = shaftIntensity > 0.03;
           }
@@ -1641,19 +2513,7 @@
       }
       createTornadoForCloud(cloud) {
         const funnel = new THREE.Group();
-        const coneGeom = new THREE.ConeGeometry(1.8, 6, 16);
-        const coneMat = new THREE.MeshBasicMaterial({ color: 0x552266, transparent: true, opacity: 0.7, depthWrite: false });
-        const cone = new THREE.Mesh(coneGeom, coneMat);
-        cone.rotation.x = Math.PI;
-        cone.position.y = 2.5;
-        funnel.add(cone);
-
-        const cylGeom = new THREE.CylinderGeometry(0.6, 1.2, 8, 16);
-        const cylMat = new THREE.MeshBasicMaterial({ color: 0x442244, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
-        const cyl = new THREE.Mesh(cylGeom, cylMat);
-        cyl.position.y = 6;
-        funnel.add(cyl);
-
+        // pure particle funnel: vertical column of swirling debris
         const pMax = 200;
         const pPos = new Float32Array(pMax * 3);
         const pCol = new Float32Array(pMax * 3);
@@ -1669,7 +2529,8 @@
           pCol[i * 3] = 0.15 + Math.random() * 0.15;
           pCol[i * 3 + 1] = g;
           pCol[i * 3 + 2] = 0.15;
-          pData.push({ angle: a, radius: r, y: pPos[i * 3 + 1], speed: 0.6 + Math.random() * 1.0 });
+          pSize[i] = 8 + Math.random() * 10;
+          pData.push({ angle: a, radius: r, y: pPos[i * 3 + 1], speed: 0.8 + Math.random() * 1.2 });
         }
         const pg = new THREE.BufferGeometry();
         pg.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
@@ -1707,56 +2568,35 @@
         pPoints.userData._geoRef = pg;
         funnel.add(pPoints);
 
-        const ringGeom = new THREE.TorusGeometry(2.5, 0.12, 8, 64);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0xff66ff, transparent: true, opacity: 0.65, depthWrite: false });
-        const ring = new THREE.Mesh(ringGeom, ringMat);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = 0.2;
-        funnel.add(ring);
-
         funnel.userData = {
           parentCloud: cloud,
           age: 0,
           life: 80 + Math.random() * 120,
           intensity: 0.6 + Math.random() * 0.9,
           rotationSpeed: 0.6 + Math.random() * 1.2,
-          verticalOffset: 0
+          verticalOffset: 0,
+          orbitAngle: Math.random() * Math.PI * 2,
+          orbitRadius: 4 + Math.random() * 4
         };
 
         this.meshRoot.add(funnel);
+        // mark cloud as having a tornado
+        cloud.userData.hasTornado = true;
+        this.activeTornadoes.push(funnel);
         return funnel;
       }
-      update(potentialClouds, deltaTime) {
+      update(supercellClouds, deltaTime) {
         this.spawnCooldown = Math.max(0, this.spawnCooldown - deltaTime);
+        // spawn only on supercells, and only if they are strong and precipitating
         if (this.activeTornadoes.length < this.maxTornadoes && this.spawnCooldown <= 0) {
-          for (let i = 0; i < potentialClouds.length; i++) {
-            const c = potentialClouds[i];
-            const type = c.userData.type;
+          for (let i = 0; i < supercellClouds.length; i++) {
+            const c = supercellClouds[i];
+            if (c.userData.hasTornado) continue;
             const intensity = c.userData.precipitationIntensity || 0;
-            // increase base lightning probabilities
-            const baseChance = (type === 'cumulonimbus') ? 0.06 : (type === 'cumulus_congestus' ? 0.015 : 0);
-            if (baseChance > 0 && Math.random() < baseChance * intensity * deltaTime * 60) {
-              // spawn a localized flash (PointLight + short-lived emissive pulse)
-              const flashPower = (c.userData.type === 'cumulonimbus') ? (6.0 + Math.random() * 6.0) : (1.2 + Math.random() * 1.6); // cumulus_congestus weaker
-              const flashRange = (c.userData.type === 'cumulonimbus') ? 18 + Math.random() * 12 : 6 + Math.random() * 6;
-              const flash = new THREE.PointLight(0xffffff, flashPower, flashRange, 2);
-              // place flash somewhere near cloud base/top for visual effect
-              const flashPos = new THREE.Vector3(
-                c.position.x + (Math.random() - 0.5) * (c.userData.baseScale || 1),
-                c.position.y - (Math.random() * Math.min(6, c.scale.y * 0.8)),
-                c.position.z + (Math.random() - 0.5) * (c.userData.baseScale || 1)
-              );
-              flash.position.copy(flashPos);
-              flash.userData = { life: (c.userData.type === 'cumulonimbus') ? (0.45 + Math.random() * 0.55) : (0.12 + Math.random() * 0.28), age: 0, initialIntensity: flashPower };
-              scene.add(flash);
-              c.userData._lightnings.push(flash);
-              // brief camera flash if nearby
-              const distCam = flashPos.distanceTo(camera.position);
-              if (distCam < 30) {
-                const camBoost = Math.min(0.6, (30 - distCam) / 30 * (flashPower * 0.06)) * 5.0; // amplified flash shake
-                camera.position.x += (Math.random() - 0.5) * camBoost;
-                camera.position.y += (Math.random() - 0.5) * (camBoost * 0.5);
-              }
+            if (c.userData.precipitating && intensity > 0.6 && Math.random() < 0.15 * deltaTime) {
+              this.createTornadoForCloud(c);
+              this.spawnCooldown = 25 + Math.random() * 35;
+              break;
             }
           }
         }
@@ -1766,10 +2606,9 @@
           const ud = t.userData;
           ud.age += deltaTime;
           if (!ud.parentCloud || ud.age > ud.life || ud.parentCloud.userData.age > ud.parentCloud.userData.maxAge) {
-            t.children.forEach(ch => {
-              if (ch.material) ch.material.opacity *= 0.92;
-            });
-            if (ud.age > ud.life + 6 || (t.children[0] && t.children[0].material && t.children[0].material.opacity < 0.02)) {
+            if (ud.parentCloud) ud.parentCloud.userData.hasTornado = false;
+            // fade-out: simply remove after extra time
+            if (ud.age > ud.life + 4) {
               if (ud.parentCloud) ud.parentCloud.userData.hasTornado = false;
               this.meshRoot.remove(t);
               t.traverse(node => {
@@ -1783,17 +2622,21 @@
 
           const cloudPos = new THREE.Vector3();
           ud.parentCloud.getWorldPosition(cloudPos);
-          const offset = new THREE.Vector3(Math.sin(ud.age * 0.9) * 1.5, 0, Math.cos(ud.age * 0.7) * 1.5);
+          // orbit around supercell base
+          ud.orbitAngle += (0.3 + ud.intensity * 0.3) * deltaTime;
+          const orbitR = ud.orbitRadius * (0.8 + Math.sin(ud.age * 0.3) * 0.2);
           const cloudBaseY = cloudPos.y - (ud.parentCloud.scale.y * 0.9);
-          const targetPos = cloudPos.clone().setY(Math.max(0.2, cloudBaseY - 0.6));
-          targetPos.add(offset);
-          t.position.lerp(targetPos, 0.12 + Math.min(0.45, ud.intensity * 0.18));
+          const targetPos = new THREE.Vector3(
+            cloudPos.x + Math.cos(ud.orbitAngle) * orbitR,
+            Math.max(0.2, cloudBaseY - 0.6),
+            cloudPos.z + Math.sin(ud.orbitAngle) * orbitR
+          );
+          t.position.lerp(targetPos, 0.25);
 
-          t.children.forEach((ch, idx) => {
-            ch.rotation.y += ud.rotationSpeed * (idx % 2 === 0 ? 1 : -1) * deltaTime * (0.8 + ud.intensity * 1.2);
-          });
+          // spin the whole particle column
+          t.rotation.y += ud.rotationSpeed * deltaTime * (0.8 + ud.intensity * 1.2);
 
-          const wobble = Math.sin(ud.age * 2.0) * 0.2 * ud.intensity;
+          const wobble = Math.sin(ud.age * 2.0) * 0.3 * ud.intensity;
           t.position.y = Math.max(0.2, targetPos.y + wobble);
 
           const scaleBase = 0.6 + ud.intensity * 1.8;
@@ -1935,6 +2778,7 @@
         document.addEventListener('mousedown', (e) => {
           if (e.button === 0 && e.target === renderer.domElement) {
             this.isDragging = true;
+            // store starting positions consistently
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
             e.preventDefault();
@@ -1943,8 +2787,9 @@
         document.addEventListener('mouseup', () => this.isDragging = false);
         document.addEventListener('mousemove', (e) => {
           if (this.isDragging) {
-            this.yaw -= (e.clientX -this.lastMousex) * 0.003;
-            this.pitch -= (e.clientY -this.lastMouseY) * 0.003;
+            // reduced sensitivity for desktop mouse
+            this.yaw -= (e.clientX - this.lastMouseX) * 0.0015;
+            this.pitch -= (e.clientY - this.lastMouseY) * 0.0015;
             this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch));
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
@@ -1961,8 +2806,9 @@
         }, { passive: false });
         document.addEventListener('touchmove', (e) => {
           if (this.isDragging && e.touches.length === 1) {
-            this.yaw -= (e.touches[0].clientX - this.lastMouseX) * 0.005;
-            this.pitch -= (e.touches[0].clientY -this.lastMouseY) * 0.005;
+            // slightly reduced sensitivity for touch drags
+            this.yaw -= (e.touches[0].clientX - this.lastMouseX) * 0.0025;
+            this.pitch -= (e.touches[0].clientY - this.lastMouseY) * 0.0025;
             this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch));
             this.lastMouseX = e.touches[0].clientX;
             this.lastMouseY = e.touches[0].clientY;
@@ -2010,23 +2856,30 @@
 
     // Simple Volcano emitter that can bias nearby clouds into pyrocumulus formations
     class Volcano {
-      constructor(x = -50, z = 20) {
+      // size: 0.5 (small) .. 1.8 (large) controls visual scale and influence radius
+      constructor(x = -50, z = 20, size = 1.0) {
         this.position = new THREE.Vector3(x, 0, z);
         this.active = true;
-        // visual: small cone on ground
-        const geom = new THREE.ConeGeometry(4, 6, 16);
+        this.size = size;
+        // visual: cone scaled by size
+        const geom = new THREE.ConeGeometry(4 * size, 6 * size, 16);
         const mat = new THREE.MeshStandardMaterial({ color: 0x44302a, roughness: 1.0 });
         this.mesh = new THREE.Mesh(geom, mat);
-        this.mesh.position.set(x, 3, z);
+        // lift mesh proportionally to size so base remains on ground
+        this.mesh.position.set(x, 3 * size, z);
+        this.mesh.scale.set(1, 1, 1);
         this.mesh.rotation.y = Math.random() * Math.PI * 2;
         scene.add(this.mesh);
-        // small ember sprite group (for hint)
+        // ember sprite scaled by size
         const spriteTex = createHaloTexture(128, 'rgba(255,140,60,1.0)');
         const spMat = new THREE.SpriteMaterial({ map: spriteTex, transparent: true, opacity: 0.0, depthTest: false, blending: THREE.AdditiveBlending });
         this.ember = new THREE.Sprite(spMat);
-        this.ember.scale.set(8,8,1);
-        this.ember.position.set(x, 6, z);
+        this.ember.scale.set(8 * size, 8 * size, 1);
+        this.ember.position.set(x, 6 * size, z);
         scene.add(this.ember);
+        // influence radius used when deciding pyro-cloud placement
+        // scale influence strongly with size so big volcanoes produce many plumes and bias pyro-cloud formation
+        this.influenceRadius = 160 + (size * 420); // larger volcano influences wider area
       }
       update(dt) {
         if (!this.active) { this.ember.material.opacity = Math.max(0, this.ember.material.opacity - dt * 0.8); return; }
@@ -2038,21 +2891,109 @@
 
     const windSystem = new WindSystem();
     const cloudSystem = new CloudSystem();
-    const volcano = new Volcano(-40, 28);
+    // Volcano spawning system: higher chance to spawn 1-3 volcanoes distributed around scene
+    const volcanoes = [];
+    function spawnVolcanoes() {
+      // respect control toggle
+      if (!state.controls.spawnVolcanoes) return;
+      // 90% chance to have volcano activity at start; spawn 1-3 volcanoes
+      if (Math.random() < 0.9) {
+        const count = 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+          const x = (Math.random() - 0.5) * 320; // spread across area
+          const z = (Math.random() - 0.5) * 320;
+          // widen size range so some volcanoes can be much larger and produce many plumes
+          const size = 0.6 + Math.random() * 2.4; // 0.6 .. 3.0
+          const v = new Volcano(x, z, size);
+          // slight randomize active flag to allow dormant volcanoes occasionally
+          v.active = Math.random() < 0.92;
+          volcanoes.push(v);
+        }
+      } else {
+        // small chance of single quiet volcano with modest size
+        volcanoes.push(new Volcano(-40, 28, 0.9));
+      }
+    }
+    spawnVolcanoes();
     const radarSystem = new RadarSystem();
     const cameraController = new CameraController(camera);
     const precipitationSystem = new PrecipitationSystem();
     const treeSystem = new TreeSystem();
+    const tornadoSystem = new TornadoSystem();
     const vignetteEl = document.getElementById('vignette');
+    // wire up cloud toggles UI -> cloudSystem.allowedTypes
+    (function(){
+      const panel = document.getElementById('cloudTogglePanel');
+      if (!panel) return;
+      panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        const key = cb.getAttribute('data-cloud');
+        cb.addEventListener('change', () => {
+          if (cloudSystem && cloudSystem.allowedTypes && key) cloudSystem.allowedTypes[key] = cb.checked;
+        });
+        // initialize allowedTypes from DOM if present
+        if (cloudSystem && cloudSystem.allowedTypes && key) cloudSystem.allowedTypes[key] = cb.checked;
+      });
+    })();
+
+    // wire up volcano spawn toggle
+    (function(){
+      const el = document.getElementById('spawnVolcanoToggle');
+      if (!el) return;
+      el.checked = !!state.controls.spawnVolcanoes;
+      el.addEventListener('change', (e) => {
+        state.controls.spawnVolcanoes = !!e.target.checked;
+      });
+    })();
+
+    // wire up shadows toggle
+    (function(){
+      const sh = document.getElementById('toggleShadows');
+      if (!sh) return;
+      sh.checked = !!state.controls.enableShadows;
+      sh.addEventListener('change', (e) => {
+        state.controls.enableShadows = !!e.target.checked;
+        // enable/disable renderer shadowMap; keep simple toggle (some geometries may not cast/receive)
+        renderer.shadowMap.enabled = state.controls.enableShadows;
+      });
+    })();
+
+    // wire up hail toggle
+    (function(){
+      const h = document.getElementById('toggleHail');
+      if (!h) return;
+      h.checked = !!state.controls.allowHail;
+      h.addEventListener('change', (e) => {
+        state.controls.allowHail = !!e.target.checked;
+      });
+    })();
+
     // update volcano each frame
-    function updateVolcano(dt) { if (typeof volcano !== 'undefined' && volcano) volcano.update(dt); }
+    function updateVolcano(dt) {
+      for (let i = 0; i < volcanoes.length; i++) {
+        const v = volcanoes[i];
+        if (v) v.update(dt);
+      }
+    }
 
     let lastTime = Date.now();
+    // FPS tracking
+    let fpsAcc = 0, fpsLastTime = Date.now(), fpsFrames = 0;
     function animate() {
       requestAnimationFrame(animate);
       const now = Date.now();
       const deltaTime = ((now - lastTime) / 1000) * state.controls.simulationSpeed;
       lastTime = now;
+
+      // update FPS every 0.5s (smoothed)
+      fpsFrames++;
+      const fpsNow = Date.now();
+      if (fpsNow - fpsLastTime >= 500) {
+        const fps = Math.round((fpsFrames * 1000) / (fpsNow - fpsLastTime));
+        const fpsEl = document.getElementById('fps');
+        if (fpsEl) fpsEl.textContent = String(fps);
+        fpsFrames = 0;
+        fpsLastTime = fpsNow;
+      }
 
       cameraController.update();
 
@@ -2066,7 +3007,10 @@
         cloudSystem.update(deltaTime, windSystem);
 
         const precipClouds = cloudSystem.getPrecipitatingClouds();
-        radarSystem.update(cloudSystem.clouds, [], camera.position);
+        // update tornadoes only on supercells
+        const supercellClouds = cloudSystem.clouds.filter(c => c.userData.type === 'supercell');
+        tornadoSystem.update(supercellClouds, deltaTime);
+        radarSystem.update(cloudSystem.clouds, tornadoSystem.activeTornadoes, camera.position);
         // Vignette: only show when a large cloud is overhead above camera
         (function(){
           let maxOpacity = 0;
@@ -2133,8 +3077,9 @@
         document.getElementById('cloudCount').textContent = cloudSystem.clouds.length;
         document.getElementById('cloudTypesList').innerHTML = typesList;
         document.getElementById('precipitation').textContent = precipClouds.length > 0 ? `Active (${precipClouds.length})` : 'None';
-        document.getElementById('tornadoCount').textContent = 0;
-        document.getElementById('tornadoWarning').style.display = 'none';
+        const activeTornadoCount = tornadoSystem.activeTornadoes.length;
+        document.getElementById('tornadoCount').textContent = activeTornadoCount;
+        document.getElementById('tornadoWarning').style.display = activeTornadoCount > 0 ? 'block' : 'none';
         document.getElementById('windSpeed').textContent = (windSystem ? (windSystem.getWindSpeed() * state.controls.windSpeed * 100).toFixed(1) : '0.0');
         document.getElementById('tempDisplay').textContent = state.controls.temperature.toFixed(1);
         document.getElementById('humidityDisplay').textContent = state.controls.humidity.toFixed(1);
